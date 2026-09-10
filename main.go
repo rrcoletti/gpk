@@ -91,7 +91,16 @@ func runPicker(ctx context.Context, token string) error {
 		return err
 	}
 
-	bm := tui.NewBoardModel(fmt.Sprintf("%s #%d — %d items", project.Title, project.Number, len(items)))
+	refetch := func() ([]board.Item, error) {
+		items, err := fetchAllItems(ctx, client, project.ID, status.ID)
+		if err != nil {
+			return nil, err
+		}
+		return toBoardItems(items), nil
+	}
+
+	bm := tui.NewBoardModel(fmt.Sprintf("%s #%d", project.Title, project.Number),
+		client, project.ID, status.ID, status, refetch)
 	bm.SetColumns(board.Build(status, toBoardItems(items)))
 	_, err = tea.NewProgram(bm).Run()
 	return err

@@ -21,8 +21,10 @@ const (
 	// GitHub CLI's public OAuth app client_id.
 	ClientID = "178c6fc778ccc68e1d6a"
 
-	// Scopes needed for read-only Projects v2 and repo metadata.
-	Scopes = "repo read:project"
+	// Scopes needed for Projects v2 read AND write (moving items between
+	// columns uses updateProjectV2ItemFieldValue, which needs 'project'),
+	// plus repo metadata.
+	Scopes = "repo read:project project"
 )
 
 // DeviceCode is the pending authorization returned by step 1.

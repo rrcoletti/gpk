@@ -33,7 +33,7 @@ func RunMockBoard(user string) error {
 		{ID: "i9", Title: "Draft: spike keyboard-driven column reordering", Type: "DraftIssue"},
 	}
 
-	m := NewBoardModel(user + " — MOCK DATA (no live items yet)")
+	m := NewBoardModel(user+" — MOCK DATA (moves are local only)", nil, "", "", gh.FieldDef{}, nil)
 	m.SetColumns(board.Build(status, items))
 	_, err := tea.NewProgram(m).Run()
 	return err
