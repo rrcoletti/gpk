@@ -7,13 +7,16 @@ import (
 
 // ProjectItem is one item on a project board with its status resolution.
 type Item struct {
-	ID       string
-	Title    string
-	Type     string // "Issue", "PullRequest", "DraftIssue"
-	Number   int    // 0 for drafts
-	URL      string
-	Assignee string // first assignee login, "" if none
-	OptionID string // status option id; "" = no status set
+	ID        string
+	Title     string
+	Type      string // "Issue", "PullRequest", "DraftIssue"
+	Number    int    // 0 for drafts
+	URL       string
+	Assignee  string // first assignee login, "" if none
+	OptionID  string // status option id; "" = no status set
+	Body      string // markdown body, may be empty
+	Repo      string // "owner/name", empty for drafts
+	ContentID string // node id of the Issue/PullRequest, "" for drafts
 }
 
 // GetProjectItems fetches one page of a project's items, resolving each
@@ -46,18 +49,24 @@ func (c *Client) GetProjectItems(ctx context.Context, projectID, statusFieldID s
 							content {
 								__typename
 								... on Issue {
+									id
 									title
 									number
 									url
+									body
+									repository { nameWithOwner }
 									assignees(first: 5) { nodes { login } }
 								}
 								... on PullRequest {
+									id
 									title
 									number
 									url
+									body
+									repository { nameWithOwner }
 									assignees(first: 5) { nodes { login } }
 								}
-								... on DraftIssue { title }
+								... on DraftIssue { title body }
 							}
 						}
 					}
@@ -89,10 +98,15 @@ func (c *Client) GetProjectItems(ctx context.Context, projectID, statusFieldID s
 						} `json:"nodes"`
 					} `json:"fieldValues"`
 					Content struct {
-						Typename  string `json:"__typename"`
-						Title     string `json:"title"`
-						Number    int    `json:"number"`
-						URL       string `json:"url"`
+						ID         string `json:"id"`
+						Typename   string `json:"__typename"`
+						Title      string `json:"title"`
+						Number     int    `json:"number"`
+						URL        string `json:"url"`
+						Body       string `json:"body"`
+						Repository struct {
+							NameWithOwner string `json:"nameWithOwner"`
+						} `json:"repository"`
 						Assignees struct {
 							Nodes []struct {
 								Login string `json:"login"`
@@ -117,7 +131,10 @@ func (c *Client) GetProjectItems(ctx context.Context, projectID, statusFieldID s
 		if n.Content.Typename != "DraftIssue" {
 			it.Number = n.Content.Number
 			it.URL = n.Content.URL
+			it.Repo = n.Content.Repository.NameWithOwner
+			it.ContentID = n.Content.ID
 		}
+		it.Body = n.Content.Body
 		if len(n.Content.Assignees.Nodes) > 0 {
 			it.Assignee = n.Content.Assignees.Nodes[0].Login
 		}

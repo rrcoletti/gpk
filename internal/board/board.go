@@ -6,12 +6,15 @@ import "gpk/internal/gh"
 
 // Card is one item rendered on the board.
 type Card struct {
-	ID       string
-	Title    string
-	Type     string // "Issue", "PullRequest", "DraftIssue"
-	Number   int    // 0 for draft issues
-	URL      string
-	Assignee string
+	ID        string
+	Title     string
+	Type      string // "Issue", "PullRequest", "DraftIssue"
+	Number    int    // 0 for draft issues
+	URL       string
+	Assignee  string
+	Body      string
+	Repo      string
+	ContentID string
 }
 
 // Column is one kanban column: a status option plus its cards.
@@ -40,12 +43,15 @@ func Build(status gh.FieldDef, items []Item) []Column {
 
 	for _, it := range items {
 		card := Card{
-			ID:       it.ID,
-			Title:    it.Title,
-			Type:     it.Type,
-			Number:   it.Number,
-			URL:      it.URL,
-			Assignee: it.Assignee,
+			ID:        it.ID,
+			Title:     it.Title,
+			Type:      it.Type,
+			Number:    it.Number,
+			URL:       it.URL,
+			Assignee:  it.Assignee,
+			Body:      it.Body,
+			Repo:      it.Repo,
+			ContentID: it.ContentID,
 		}
 		col := 0 // no option id -> "No Status"
 		if it.OptionID != "" {

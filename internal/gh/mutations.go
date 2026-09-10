@@ -64,6 +64,71 @@ func (c *Client) clearItemStatus(ctx context.Context, projectID, itemID, fieldID
 	return scopeHint(err)
 }
 
+// SetItemTitle sets an item's title. Issues are edited via updateIssue,
+// pull requests via updatePullRequest (the project Title field is read-only
+// for both); draft items are edited via the project's built-in Title field.
+func (c *Client) SetItemTitle(ctx context.Context, itemType, contentID, projectID, itemID, titleFieldID, title string) error {
+	switch itemType {
+	case "DraftIssue":
+		return c.setDraftItemTitle(ctx, projectID, itemID, titleFieldID, title)
+	case "PullRequest":
+		m := `
+			mutation($id: ID!, $title: String!) {
+				updatePullRequest(input: {pullRequestId: $id, title: $title}) {
+					pullRequest { id }
+				}
+			}`
+		var out struct {
+			UpdatePullRequest struct {
+				PullRequest struct {
+					ID string `json:"id"`
+				} `json:"pullRequest"`
+			} `json:"updatePullRequest"`
+		}
+		return scopeHint(c.Query(ctx, m, map[string]any{"id": contentID, "title": title}, &out))
+	default: // Issue
+		m := `
+			mutation($id: ID!, $title: String!) {
+				updateIssue(input: {id: $id, title: $title}) {
+					issue { id }
+				}
+			}`
+		var out struct {
+			UpdateIssue struct {
+				Issue struct {
+					ID string `json:"id"`
+				} `json:"issue"`
+			} `json:"updateIssue"`
+		}
+		return scopeHint(c.Query(ctx, m, map[string]any{"id": contentID, "title": title}, &out))
+	}
+}
+
+// setDraftItemTitle writes the built-in Title text field of a draft item.
+func (c *Client) setDraftItemTitle(ctx context.Context, projectID, itemID, titleFieldID, title string) error {
+	m := `
+		mutation($project: ID!, $item: ID!, $field: ID!, $value: String!) {
+			updateProjectV2ItemFieldValue(input: {
+				projectId: $project
+				itemId: $item
+				fieldId: $field
+				value: {text: $value}
+			}) {
+				projectV2Item { id }
+			}
+		}`
+	var out struct {
+		UpdateProjectV2ItemFieldValue struct {
+			ProjectV2Item struct {
+				ID string `json:"id"`
+			} `json:"projectV2Item"`
+		} `json:"updateProjectV2ItemFieldValue"`
+	}
+	return scopeHint(c.Query(ctx, m, map[string]any{
+		"project": projectID, "item": itemID, "field": titleFieldID, "value": title,
+	}, &out))
+}
+
 // scopeHint annotates scope-related failures with a fix hint.
 func scopeHint(err error) error {
 	if err == nil {

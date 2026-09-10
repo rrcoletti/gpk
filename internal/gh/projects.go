@@ -155,6 +155,17 @@ func (c *Client) GetProjectFields(ctx context.Context, projectID string) ([]Fiel
 	return fields, nil
 }
 
+// TitleField finds the project's built-in Title field (a text field),
+// used to edit draft issue titles. Returns ok=false if absent.
+func TitleField(fields []FieldDef) (FieldDef, bool) {
+	for _, f := range fields {
+		if !f.IsSingleSelect() && strings.EqualFold(f.Name, "Title") {
+			return f, true
+		}
+	}
+	return FieldDef{}, false
+}
+
 // StatusField picks the column field from a project's fields: the
 // single-select field named "Status" (case-insensitive) if present, else the
 // first single-select field. Returns ok=false if the project has none.

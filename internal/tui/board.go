@@ -7,9 +7,11 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"gpk/internal/auth"
 	"gpk/internal/board"
 	"gpk/internal/gh"
 )
@@ -70,25 +72,39 @@ type BoardModel struct {
 	loading     bool
 	errToast    string
 	moving      bool // in-flight API call; ignore extra H/L
+
+	detail       bool // detail view open for the selected card
+	detailScroll int
+	back         bool // esc pressed on the board: return to the picker
+
+	titleFieldID string // project's built-in Title field, for drafts
+	editing      bool   // editing the card title in detail view
+	input        textinput.Model
 }
 
 // NewBoardModel creates the board; cards are set later via SetColumns.
-// client/projectID/fieldID enable card moves; refetch enables background
-// auto-refresh; pass nil/""/""/nil for mock mode.
-func NewBoardModel(titleBase string, client *gh.Client, projectID, fieldID string, statusField gh.FieldDef, refetch func() ([]board.Item, error)) BoardModel {
+// client/projectID/fieldID enable card moves, titleFieldID enables draft
+// title edits; refetch enables background auto-refresh. Pass zero values
+// for mock mode.
+func NewBoardModel(titleBase string, client *gh.Client, projectID, fieldID, titleFieldID string, statusField gh.FieldDef, refetch func() ([]board.Item, error)) BoardModel {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = bTitleStyle
+	ti := textinput.New()
+	ti.Placeholder = "title"
+	ti.CharLimit = 256
 	return BoardModel{
-		titleBase:   titleBase,
-		client:      client,
-		projectID:   projectID,
-		fieldID:     fieldID,
-		statusField: statusField,
-		refetch:     refetch,
-		spinner:     sp,
-		loading:     true,
-		cardSel:     map[int]int{},
+		titleBase:    titleBase,
+		client:       client,
+		projectID:    projectID,
+		fieldID:      fieldID,
+		titleFieldID: titleFieldID,
+		statusField:  statusField,
+		refetch:      refetch,
+		spinner:      sp,
+		loading:      true,
+		cardSel:      map[int]int{},
+		input:        ti,
 	}
 }
 
@@ -123,9 +139,69 @@ func (m BoardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clampOffset()
 
 	case tea.KeyMsg:
+		if m.detail {
+			switch msg.String() {
+			case "ctrl+c":
+				return m, tea.Quit
+			case "esc", "enter", "q":
+				m.detail = false
+				m.detailScroll = 0
+			case "up", "k":
+				if m.detailScroll > 0 {
+					m.detailScroll--
+				}
+			case "down", "j":
+				if m.detailScroll < m.detailMaxScroll() {
+					m.detailScroll++
+				}
+			case "e":
+				if !m.editing {
+					if card, ok := m.selectedCard(); ok {
+						m.input.SetValue(card.Title) // raw title only, no "#number"
+						m.input.CursorEnd()
+						m.input.Focus()
+						m.editing = true
+						return m, nil // don't feed the opening keypress to the input
+					}
+				}
+			}
+			if m.editing {
+				switch msg.String() {
+				case "esc":
+					m.editing = false
+					m.input.Blur()
+				case "enter":
+					title := strings.TrimSpace(m.input.Value())
+					if title == "" {
+						return m, nil
+					}
+					if card, ok := m.selectedCard(); ok {
+						return m, m.setTitleCmd(card, title)
+					}
+				default:
+					var cmd tea.Cmd
+					m.input, cmd = m.input.Update(msg)
+					return m, cmd
+				}
+			}
+			return m, nil
+		}
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
+		case "esc":
+			m.back = true
+			return m, tea.Quit
+		case "enter":
+			if _, ok := m.selectedCard(); ok {
+				m.detail = true
+				m.detailScroll = 0
+			}
+		case "r":
+			if m.refetch != nil && !m.moving && !m.refreshing && !m.loading {
+				m.refreshing = true
+				return m, m.doRefetch()
+			}
 		case "left", "h":
 			if m.colSelected > 0 {
 				m.colSelected--
@@ -175,8 +251,16 @@ func (m BoardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errToast = msg.err.Error()
 		m.moving = false
 
+	case titleEditedMsg:
+		m.applyTitle(msg.title)
+
+	case titleErrMsg:
+		m.errToast = msg.err.Error()
+		m.editing = false
+		m.input.Blur()
+
 	case refreshTickMsg:
-		if m.refetch == nil || m.moving || m.refreshing || m.loading {
+		if m.refetch == nil || m.moving || m.refreshing || m.loading || m.editing {
 			return m, m.refreshTick() // retry on next interval
 		}
 		m.refreshing = true
@@ -228,6 +312,16 @@ func (m *BoardModel) applyRefresh(items []board.Item) {
 	}
 }
 
+// Back reports whether the user pressed esc on the board, requesting a
+// return to the project picker.
+func (m BoardModel) Back() bool { return m.back }
+
+// Editing reports whether the title editor is open (used by tests).
+func (m BoardModel) Editing() bool { return m.editing }
+
+// InputValue is the current editor text (used by tests).
+func (m BoardModel) InputValue() string { return m.input.Value() }
+
 // header is the title line with a live item count.
 func (m BoardModel) header() string {
 	n := 0
@@ -243,6 +337,44 @@ type itemMovedMsg struct {
 }
 
 type moveErrMsg struct{ err error }
+
+// titleEditedMsg carries the new title for local state update.
+type titleEditedMsg struct {
+	title string
+}
+
+type titleErrMsg struct{ err error }
+
+// setTitleCmd persists the new title (mock mode: local only).
+func (m BoardModel) setTitleCmd(card board.Card, title string) tea.Cmd {
+	if m.client == nil {
+		return func() tea.Msg { return titleEditedMsg{title} }
+	}
+	if card.Type != "DraftIssue" && card.ContentID == "" {
+		return func() tea.Msg {
+			return titleErrMsg{fmt.Errorf("item has no content id (deleted issue/PR?); refresh the board")}
+		}
+	}
+	client, projectID, fieldID := m.client, m.projectID, m.titleFieldID
+	ctype, contentID := card.Type, card.ContentID
+	itemID := card.ID // project item id, used by the draft path
+	return func() tea.Msg {
+		if err := client.SetItemTitle(context.Background(), ctype, contentID, projectID, itemID, fieldID, title); err != nil {
+			return titleErrMsg{err}
+		}
+		return titleEditedMsg{title}
+	}
+}
+
+// applyTitle sets the selected card's title locally after success.
+func (m *BoardModel) applyTitle(title string) {
+	if cards := m.cards(m.colSelected); m.cardSel[m.colSelected] < len(cards) {
+		cards[m.cardSel[m.colSelected]].Title = title
+	}
+	m.editing = false
+	m.input.Blur()
+	m.errToast = ""
+}
 
 // moveCardCmd moves the selected card one column left (dir=-1) or right
 // (dir=+1). In mock mode (no client) the move is applied locally.
@@ -261,9 +393,8 @@ func (m BoardModel) moveCardCmd(dir int) tea.Cmd {
 	from := m.colSelected
 
 	if m.client == nil {
-		if _, err := board.MoveCard(m.columns, from, cardIdx, to); err != nil {
-			return func() tea.Msg { return moveErrMsg{err} }
-		}
+		// mock mode: no local mutation here — applyMove runs on the
+		// itemMovedMsg, same as the API path, so the move applies once
 		return func() tea.Msg { return itemMovedMsg{from, cardIdx, to} }
 	}
 
@@ -296,6 +427,114 @@ func (m BoardModel) cards(col int) []board.Card {
 		return nil
 	}
 	return m.columns[col].Cards
+}
+
+// selectedCard returns the highlighted card, if any.
+func (m BoardModel) selectedCard() (board.Card, bool) {
+	cards := m.cards(m.colSelected)
+	idx := m.cardSel[m.colSelected]
+	if idx < 0 || idx >= len(cards) {
+		return board.Card{}, false
+	}
+	return cards[idx], true
+}
+
+// detailLayout builds the fixed header lines and the scrollable body lines
+// of the detail view. Both Update and View use it so scrolling stays
+// consistent.
+func (m BoardModel) detailLayout() (head, body []string) {
+	card, _ := m.selectedCard()
+	inner := m.width - 6
+	if inner < 20 {
+		inner = 20
+	}
+
+	meta := card.Type
+	if meta == "" {
+		meta = "Item"
+	}
+	if m.colSelected >= 0 && m.colSelected < len(m.columns) {
+		meta += " · " + m.columns[m.colSelected].Option.Name
+	}
+	head = []string{bTitleStyle.Render(cardTitle(card)), "", bDimStyle.Render(meta)}
+	if card.Assignee != "" {
+		head = append(head, bDimStyle.Render("Assignee: @"+card.Assignee))
+	}
+	if card.Repo != "" {
+		head = append(head, bDimStyle.Render("Repository: "+card.Repo))
+	}
+	if card.URL != "" {
+		// OSC 8 makes the URL clickable in terminals that support it
+		// (ghostty does); elsewhere the plain URL text remains for
+		// copy/paste and terminal URL detection.
+		head = append(head, bDimStyle.Render(auth.Hyperlink(card.URL, card.URL, "", false)))
+	}
+	head = append(head, "")
+
+	body = wrap(strings.TrimSpace(card.Body), inner)
+	if len(body) == 0 {
+		body = []string{bDimStyle.Render("(no description)")}
+	}
+	return head, body
+}
+
+// cardTitle is the title with number, or just the title for drafts.
+func cardTitle(c board.Card) string {
+	if c.Number > 0 {
+		return fmt.Sprintf("%s #%d", c.Title, c.Number)
+	}
+	return c.Title
+}
+
+// detailMaxScroll is the largest detailScroll that still shows content.
+func (m BoardModel) detailMaxScroll() int {
+	head, body := m.detailLayout()
+	vis := m.height - len(head) - 2 // header block + blank + footer
+	if m.height == 0 {
+		vis = 12
+	}
+	if vis < 3 {
+		vis = 3
+	}
+	max := len(body) - vis
+	if max < 0 {
+		max = 0
+	}
+	return max
+}
+
+// renderDetail shows one card: title, metadata, and its body, scrollable.
+func (m BoardModel) renderDetail() string {
+	if _, ok := m.selectedCard(); !ok {
+		return "\nNo card selected.\n"
+	}
+	head, body := m.detailLayout()
+
+	vis := m.height - len(head) - 2
+	if m.height == 0 {
+		vis = 15
+	}
+	if vis < 3 {
+		vis = 3
+	}
+	scroll := m.detailScroll
+	if max := len(body) - vis; scroll > max {
+		scroll = max
+	}
+	if scroll < 0 {
+		scroll = 0
+	}
+	end := scroll + vis
+	if end > len(body) {
+		end = len(body)
+	}
+
+	foot := bDimStyle.Render("j/k scroll · e edit title · esc back")
+	bottom := foot
+	if m.editing {
+		bottom = m.input.View() + "\n\n" + bDimStyle.Render("enter save · esc cancel")
+	}
+	return strings.Join(head, "\n") + "\n" + strings.Join(body[scroll:end], "\n") + "\n\n" + bottom
 }
 
 // columnWidth computes equal column width for the current terminal size.
@@ -343,6 +582,9 @@ func (m BoardModel) View() string {
 	if m.loading {
 		return "\n" + m.spinner.View() + " loading board...\n"
 	}
+	if m.detail {
+		return m.renderDetail()
+	}
 	if len(m.columns) == 0 {
 		return "\nNo columns found for this project.\n"
 	}
@@ -373,7 +615,7 @@ func (m BoardModel) View() string {
 		toast = "\n" + bDimStyle.Render(m.spinner.View()+" moving...")
 	}
 
-	foot := bDimStyle.Render("h/l columns · j/k cards · H/L move card · q quit")
+	foot := bDimStyle.Render("h/l columns · j/k cards · H/L move · enter detail · r refresh · esc back · q quit")
 	return head + "\n" + scroll + "\n\n" + row + "\n\n" + foot + toast
 }
 
