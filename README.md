@@ -1,6 +1,6 @@
 # gpk
 
-A terminal kanban board for your GitHub Projects v2. Your project's items show up in status columns, the same way the browser displays them, and you can move cards between columns without leaving the terminal. Run it with no arguments for the full flow, or `./gpk --mock` to look at the board with sample data.
+A terminal kanban board for your GitHub Projects v2. Your project's items show up in status columns, the same way the browser displays them, and you can move, add and delete items without leaving the terminal. Run it with no arguments for the full flow, or `./gpk --mock` to look at the board with sample data.
 
 There is nothing else to install. No `gh`, and the only browser visit is a one-time auth.
 
@@ -11,7 +11,10 @@ There is nothing else to install. No `gh`, and the only browser visit is a one-t
 - Renders the project as a kanban board, one column per Status option, in the same order as the web UI.
 - Shows items (issues, pull requests, draft issues) with number and assignee.
 - Moves items between columns with two keys, `H` and `L`, and writes the change to GitHub.
+- Adds items (`+`) to any column and removes them (`-`, with confirmation).
+- Opens a detail view for each card: description, repository, URL, and in-place title editing.
 - Re-fetches items every 5 seconds, so changes made in the browser or by teammates appear on their own.
+- Screens switch inside one app: going back to the project list and re-opening a board is instant, no reloads.
 - Talks to GitHub over the GraphQL API with a plain `net/http` client.
 
 ## Building
@@ -82,9 +85,24 @@ On the board:
     g / G          jump to first/last card in the column
     H              move the selected card one column left
     L              move the selected card one column right
+    +              add an item to the selected column
+    -              remove the selected item from the board
+    Enter          open the selected card's details
+    r              refresh now
+    esc            go back to the previous screen
     q              quit
 
-`H` and `L` change the item's Status field on GitHub, the same as dragging the card in the browser. Moving a card into the leftmost "No Status" column clears its status. Items whose status option was deleted from the field also land in "No Status".
+On the detail view: `j`/`k` scroll the description, `e` edits the title,
+`esc` returns to the board. All screens share the same layout: a header
+line, a bordered pane and a footer with the available keys.
+
+`H` and `L` change the item's Status field on GitHub, the same as dragging the card in the browser.
+
+`+` opens a full-screen form that shows where the item will be created. The target repository is decided in this order: the default repository configured in the project settings, then the only repository the board's items come from, then a menu listing the repositories of the board's items (pick one with `j`/`k` and `Enter`). The created item is a real issue in that repository. A plain draft item is the fallback, used only when the board gives no repository information at all. After choosing, type the title and press `Enter`.
+
+`-` removes the selected item from the project after a confirmation screen. For drafts that deletes them; for linked issues and pull requests it only removes them from the board, the same as GitHub's "Remove from project".
+
+A "No Status" column appears only when it has items, as in the web UI: moving a card to it clears the item's status, and items whose status option was deleted from the field land there.
 
 The board re-fetches items every 5 seconds. Move a card in the browser while the TUI is open and it appears on its own within five seconds. Your selected card stays selected across refreshes.
 
@@ -95,7 +113,7 @@ Two other flags: `./gpk --mock` shows the board with sample data and makes no AP
 - The device flow grants the classic coarse OAuth scopes, `repo` and `project`. `repo` means full read and write on your private repositories. That is broader than gpk needs, but it is the only granularity this auth method offers.
 - Moves are optimistic. The card moves in the UI right away, and if GitHub rejects the change you get an error message while the next refresh restores the real state.
 - The 5-second refresh sends one GraphQL request per tick, about 720 per hour on an open board. GitHub allows 5000 per hour for authenticated requests, so a single instance is fine; a handful of open boards is still fine, but it adds up.
-- Draft issues have no number and no repository, so they render with just their title.
+- Project numbers are GitHub bookkeeping and are not shown anywhere in the interface. Issue and pull request numbers are kept, they are what people reference in commits and conversations.
 
 ## License
 

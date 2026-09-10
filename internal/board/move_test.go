@@ -12,7 +12,9 @@ func cols() []Column {
 		{ID: "o1", Name: "Todo"},
 		{ID: "o2", Name: "Done"},
 	}}
+	// one item without status so the No Status column exists at index 0
 	return Build(s, []Item{
+		{ID: "i0", Title: "x"},
 		{ID: "i1", Title: "a", OptionID: "o1"},
 		{ID: "i2", Title: "b", OptionID: "o1"},
 		{ID: "i3", Title: "c", OptionID: "o2"},
@@ -37,12 +39,15 @@ func TestMoveCardBetweenColumns(t *testing.T) {
 }
 
 func TestMoveCardToNoStatus(t *testing.T) {
-	cs := cols()
+	cs := cols() // [No Status: i0 | Todo: i1,i2 | Done: i3]
 	if _, err := MoveCard(cs, 2, 0, 0); err != nil {
 		t.Fatal(err)
 	}
-	if len(cs[0].Cards) != 1 || cs[0].Cards[0].ID != "i3" {
-		t.Errorf("No Status column wrong: %+v", cs[0].Cards)
+	if got := len(cs[0].Cards); got != 2 {
+		t.Fatalf("No Status should hold 2 cards, got %d", got)
+	}
+	if last := cs[0].Cards[len(cs[0].Cards)-1]; last.ID != "i3" {
+		t.Errorf("moved card should be at the end: %+v", cs[0].Cards)
 	}
 	if len(cs[2].Cards) != 0 {
 		t.Errorf("source should be empty: %+v", cs[2].Cards)

@@ -181,7 +181,7 @@ func (m PickerModel) View() string {
 // highlighted when selected.
 func (m PickerModel) renderRow(i int) string {
 	p := m.projects[i]
-	line := fmt.Sprintf(" #%-4d %s", p.Number, p.Title)
+	line := " " + p.Title
 	if p.Closed {
 		line += "  (closed)"
 	}

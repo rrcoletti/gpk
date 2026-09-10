@@ -19,10 +19,12 @@ func status() gh.FieldDef {
 }
 
 func TestBuildGroupsByOptionOrder(t *testing.T) {
+	// no-status item present: No Status column first, then options in order
 	items := []Item{
 		{ID: "i1", Title: "b", OptionID: "o3"},
 		{ID: "i2", Title: "a", OptionID: "o1"},
 		{ID: "i3", Title: "c", OptionID: "o1"},
+		{ID: "i4", Title: "no status"},
 	}
 	cols := Build(status(), items)
 
@@ -45,6 +47,27 @@ func TestBuildGroupsByOptionOrder(t *testing.T) {
 	}
 }
 
+func TestBuildHidesEmptyNoStatus(t *testing.T) {
+	// all items have a status: no No Status column (matches the web UI)
+	items := []Item{
+		{ID: "i2", Title: "a", OptionID: "o1"},
+		{ID: "i1", Title: "b", OptionID: "o3"},
+	}
+	cols := Build(status(), items)
+	if len(cols) != 3 {
+		t.Fatalf("got %d columns, want 3 (No Status hidden)", len(cols))
+	}
+	if cols[0].Option.Name != "Todo" {
+		t.Fatalf("first column = %q, want Todo", cols[0].Option.Name)
+	}
+	// unknown option id also counts as no-status
+	items = append(items, Item{ID: "i9", Title: "stale", OptionID: "zzz"})
+	cols = Build(status(), items)
+	if cols[0].Option.Name != "No Status" || len(cols[0].Cards) != 1 {
+		t.Fatalf("unknown option id should create a No Status column: %+v", cols)
+	}
+}
+
 func TestBuildNoStatusAndUnknownOptions(t *testing.T) {
 	items := []Item{
 		{ID: "i1", Title: "no option id"},
@@ -63,8 +86,8 @@ func TestBuildNoStatusAndUnknownOptions(t *testing.T) {
 
 func TestBuildEmpty(t *testing.T) {
 	cols := Build(status(), nil)
-	if len(cols) != 4 {
-		t.Fatalf("columns should still exist with zero items, got %d", len(cols))
+	if len(cols) != 3 { // option columns only, no empty No Status
+		t.Fatalf("got %d columns, want 3", len(cols))
 	}
 	for _, c := range cols {
 		if len(c.Cards) != 0 {

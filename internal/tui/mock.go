@@ -25,7 +25,7 @@ func RunMockBoard(user string) error {
 			Repo: "rrcoletti/gpk", URL: "https://github.com/rrcoletti/gpk/issues/142",
 			Body: "The pipeline fails intermittently on the arm runner when the cache is cold.\n\nReproduces about one in five runs. Steps:\n\n1. Clear the runner cache\n2. Run the full test suite\n3. Watch the artifact upload step time out\n\nSuspect a race between the upload and the teardown hook."},
 		{ID: "i2", Title: "Add pagination to the items GraphQL query", Type: "Issue", Number: 138, OptionID: "o2",
-			Repo: "rrcoletti/gpk", URL: "https://github.com/rrcoletti/gpk/issues/138",
+			Repo: "rrcoletti/other", URL: "https://github.com/rrcoletti/other/issues/138",
 			Body: "Large projects only show their first page of items. The query already accepts a cursor; wire it through and load more when the user reaches the end of a column."},
 		{ID: "i3", Title: "board: horizontal scroll jumps past last column", Type: "Issue", Number: 137, Assignee: "rrcoletti", OptionID: "o4",
 			Repo: "rrcoletti/gpk", URL: "https://github.com/rrcoletti/gpk/issues/137",

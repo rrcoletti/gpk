@@ -182,3 +182,35 @@ func StatusField(fields []FieldDef) (FieldDef, bool) {
 	}
 	return FieldDef{}, false
 }
+
+// ProjectRepositories returns the repositories linked to a project
+// (the project settings' default repository, used for draft-issue
+// conversion and workflows). Usually one; may be empty.
+func (c *Client) ProjectRepositories(ctx context.Context, projectID string) ([]string, error) {
+	q := `
+		query($id: ID!) {
+			node(id: $id) {
+				... on ProjectV2 {
+					repositories(first: 10) { nodes { nameWithOwner } }
+				}
+			}
+		}`
+	vars := map[string]any{"id": projectID}
+	var out struct {
+		Node struct {
+			Repositories struct {
+				Nodes []struct {
+					NameWithOwner string `json:"nameWithOwner"`
+				} `json:"nodes"`
+			} `json:"repositories"`
+		} `json:"node"`
+	}
+	if err := c.Query(ctx, q, vars, &out); err != nil {
+		return nil, fmt.Errorf("project repositories: %w", err)
+	}
+	repos := make([]string, 0, len(out.Node.Repositories.Nodes))
+	for _, n := range out.Node.Repositories.Nodes {
+		repos = append(repos, n.NameWithOwner)
+	}
+	return repos, nil
+}

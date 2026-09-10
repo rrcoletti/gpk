@@ -19,7 +19,8 @@ func TestPeekShowsFourChars(t *testing.T) {
 	items := []board.Item{{ID: "i1", Title: "a", OptionID: "o1"}}
 	m := NewBoardModel("t", nil, "", "", "", status, nil)
 	m.SetColumns(board.Build(status, items))
-	up, _ := m.Update(tea.WindowSizeMsg{Width: 50, Height: 40})
+	// 2 columns at 40 cells: (40-4)/2 = 18 < 22 -> 1 visible + peek of Done
+	up, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 40})
 	m = up.(BoardModel)
 	lines := strings.Split(m.View(), "\n")
 	borderLine, nameLine := peekLines(lines)
@@ -29,7 +30,7 @@ func TestPeekShowsFourChars(t *testing.T) {
 	if !strings.HasSuffix(borderLine, "╭────") {
 		t.Fatalf("peek border row must end with a 5-cell sliver: %q", borderLine)
 	}
-	if !strings.Contains(nameLine, "│A 1 ") {
+	if !strings.Contains(nameLine, "│Done") {
 		t.Errorf("peek should show border + 4 chars of the next column: %q", nameLine)
 	}
 }

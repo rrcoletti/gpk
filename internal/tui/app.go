@@ -86,7 +86,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.screen = ScreenBoard
 			return m, tea.Batch(b.doRefetch(), b.refreshTick())
 		}
-		b := NewBoardModel(fmt.Sprintf("%s #%d", msg.Project.Title, msg.Project.Number),
+		b := NewBoardModel(msg.Project.Title,
 			m.client, msg.Project.ID, "", "", gh.FieldDef{}, nil)
 		b.appMode = true
 		b.loading = true
@@ -100,9 +100,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case boardDataMsg:
-		b := NewBoardModel(fmt.Sprintf("%s #%d", m.project.Title, m.project.Number),
-			m.client, m.project.ID, "", msg.titleField.ID, msg.status, m.refetchFor(m.project, msg.status))
+		b := NewBoardModel(m.project.Title,
+			m.client, m.project.ID, msg.status.ID, msg.titleField.ID, msg.status, m.refetchFor(m.project, msg.status))
 		b.appMode = true
+		b.projectDefaultRepo = msg.defaultRepo
 		b.applySize(m.lastW, m.lastH)
 		b.SetColumns(board.Build(msg.status, msg.items))
 		m.boards[m.project.ID] = &b
@@ -136,9 +137,10 @@ func (m AppModel) View() string {
 }
 
 type boardDataMsg struct {
-	status     gh.FieldDef
-	titleField gh.FieldDef
-	items      []board.Item
+	status      gh.FieldDef
+	titleField  gh.FieldDef
+	items       []board.Item
+	defaultRepo string // project settings' default repository, "" = none
 }
 
 type boardDataErrMsg struct{ err error }
@@ -156,11 +158,20 @@ func (m AppModel) loadBoardData(p gh.Project) tea.Cmd {
 			return boardDataErrMsg{fmt.Errorf("project %q has no single-select field to use as columns", p.Title)}
 		}
 		titleField, _ := gh.TitleField(fields)
+		repos, err := client.ProjectRepositories(context.Background(), p.ID)
+		if err != nil {
+			return boardDataErrMsg{err}
+		}
 		items, err := client.FetchAllItems(context.Background(), p.ID, status.ID)
 		if err != nil {
 			return boardDataErrMsg{err}
 		}
-		return boardDataMsg{status: status, titleField: titleField, items: board.FromGhItems(items)}
+		defRepo := ""
+		if len(repos) > 0 {
+			defRepo = repos[0] // the project settings' default repository
+		}
+		return boardDataMsg{status: status, titleField: titleField,
+			items: board.FromGhItems(items), defaultRepo: defRepo}
 	}
 }
 

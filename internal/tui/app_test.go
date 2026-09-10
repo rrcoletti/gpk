@@ -41,7 +41,7 @@ func TestAppBoardBackToPickerAndCachedReEntry(t *testing.T) {
 	if am.board.loading {
 		t.Fatal("boardDataMsg should end loading")
 	}
-	if got := am.board.header(); got != "proj #7 — 1 items" {
+	if got := am.board.header(); got != "proj — 1 items" { // project title only, no number
 		t.Fatalf("header = %q", got)
 	}
 
@@ -91,6 +91,33 @@ func TestAppFreshPickShowsLoading(t *testing.T) {
 	am = up.(AppModel)
 	if am.screen != ScreenBoard || !am.board.loading {
 		t.Fatal("a different project must start a fresh loading board")
+	}
+}
+
+// TestAppBoardWiring locks the field wiring: boards built by the app shell
+// must carry the project and status field ids, or writes (add, delete,
+// move, title) fail with "project or status field unknown".
+func TestAppBoardWiring(t *testing.T) {
+	am := NewAppModel(nil)
+	am.picker.projects = []gh.Project{{ID: "p1", Number: 1, Title: "proj"}}
+	up, _ := am.Update(tea.WindowSizeMsg{Width: 200, Height: 50})
+	am = up.(AppModel)
+	up, _ = am.Update(ProjectPickedMsg{Project: gh.Project{ID: "p1", Number: 1, Title: "proj"}})
+	am = up.(AppModel)
+	up, _ = am.Update(boardDataMsg{
+		status:     gh.FieldDef{ID: "PVTSSF_status", Name: "Status", Options: []gh.SelectOption{{ID: "o1", Name: "Todo"}}},
+		titleField: gh.FieldDef{ID: "PVTF_title"},
+		items:      nil,
+	})
+	am = up.(AppModel)
+	if am.board.projectID != "p1" {
+		t.Fatalf("board projectID = %q, want p1", am.board.projectID)
+	}
+	if am.board.fieldID != "PVTSSF_status" {
+		t.Fatalf("board fieldID = %q, want PVTSSF_status (writes would fail)", am.board.fieldID)
+	}
+	if am.board.titleFieldID != "PVTF_title" {
+		t.Fatalf("board titleFieldID = %q, want PVTF_title", am.board.titleFieldID)
 	}
 }
 

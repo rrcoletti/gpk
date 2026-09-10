@@ -56,7 +56,7 @@ func TestPickerSmallTerminal(t *testing.T) {
 	up, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 8})
 	m = up.(PickerModel)
 	v := m.View()
-	if !strings.Contains(v, "gpk · your projects (1)") || !strings.Contains(v, "#1") {
+	if !strings.Contains(v, "gpk · your projects (1)") || !strings.Contains(v, "one") {
 		t.Errorf("small-terminal view broken:\n%s", v)
 	}
 }

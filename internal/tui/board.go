@@ -81,6 +81,17 @@ type BoardModel struct {
 	titleFieldID string // project's built-in Title field, for drafts
 	editing      bool   // editing the card title in detail view
 	input        textinput.Model
+	adding       bool   // add screen open for the selected column
+	addRepo      string // repo new issues go to; "" = draft
+	// projectDefaultRepo is the repository linked in the project settings;
+	// it overrides the single-repo inference from board items.
+	projectDefaultRepo string
+	// repo menu: shown on the add screen when the board mixes repositories
+	choosingRepo   bool
+	repoCandidates []string
+	repoSel        int
+	repoTop        int
+	confirming     bool // delete confirmation pending
 }
 
 // NewBoardModel creates the board; cards are set later via SetColumns.
@@ -92,7 +103,8 @@ func NewBoardModel(titleBase string, client *gh.Client, projectID, fieldID, titl
 	sp.Spinner = spinner.Dot
 	sp.Style = bTitleStyle
 	ti := textinput.New()
-	ti.Placeholder = "title"
+	ti.Placeholder = "item title"
+	ti.Width = 64 // without a width, the placeholder renders as just "t"
 	ti.CharLimit = 256
 	return BoardModel{
 		titleBase:    titleBase,
@@ -187,9 +199,88 @@ func (m BoardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if m.choosingRepo {
+			switch msg.String() {
+			case "esc":
+				m.choosingRepo = false
+				m.adding = false
+			case "up", "k":
+				if m.repoSel > 0 {
+					m.repoSel--
+				}
+				m.clampRepoView()
+			case "down", "j":
+				if m.repoSel < len(m.repoCandidates)-1 {
+					m.repoSel++
+				}
+				m.clampRepoView()
+			case "enter":
+				m.addRepo = m.repoCandidates[m.repoSel]
+				m.choosingRepo = false
+				m.input.SetValue("")
+				m.input.Focus()
+			}
+			return m, nil
+		}
+		if m.adding {
+			switch msg.String() {
+			case "esc":
+				m.adding = false
+				m.input.Blur()
+			case "enter":
+				title := strings.TrimSpace(m.input.Value())
+				if title == "" {
+					return m, nil
+				}
+				return m, m.addItemCmd(title)
+			default:
+				var cmd tea.Cmd
+				m.input, cmd = m.input.Update(msg)
+				return m, cmd
+			}
+			return m, nil
+		}
+		if m.confirming {
+			switch msg.String() {
+			case "esc", "n":
+				m.confirming = false
+			case "enter", "y":
+				return m, m.deleteItemCmd()
+			}
+			return m, nil
+		}
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
+		case "+":
+			if !m.adding && !m.confirming {
+				m.addRepo = m.projectDefaultRepo
+				if m.addRepo == "" {
+					m.addRepo = board.DefaultRepo(m.columns) // single-repo boards
+				}
+				if m.addRepo == "" {
+					if cands := board.ItemRepos(m.columns); len(cands) > 1 {
+						// mixed repos and no configured default: menu
+						m.repoCandidates = cands
+						m.repoSel = 0
+						m.repoTop = 0
+						m.choosingRepo = true
+						m.adding = true
+						return m, nil
+					}
+				}
+				m.input.SetValue("")
+				m.input.Focus()
+				m.adding = true
+				return m, nil
+			}
+		case "-":
+			if !m.adding && !m.confirming {
+				if _, ok := m.selectedCard(); ok {
+					m.confirming = true
+					return m, nil
+				}
+			}
 		case "esc":
 			if m.appMode {
 				return m, func() tea.Msg { return backMsg{} }
@@ -251,16 +342,25 @@ func (m BoardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyMove(msg.fromCol, msg.cardIdx, msg.toCol)
 		m.moving = false
 
-	case moveErrMsg:
-		m.errToast = msg.err.Error()
-		m.moving = false
-
 	case titleEditedMsg:
 		m.applyTitle(msg.title)
 
 	case titleErrMsg:
 		m.errToast = msg.err.Error()
 		m.editing = false
+		m.input.Blur()
+
+	case itemAddedMsg:
+		m.applyAdd(msg)
+
+	case itemDeletedMsg:
+		m.applyDelete(msg.col, msg.cardIdx)
+
+	case errMsg:
+		m.errToast = msg.err.Error()
+		m.moving = false
+		m.adding = false
+		m.confirming = false
 		m.input.Blur()
 
 	case refreshTickMsg:
@@ -333,6 +433,30 @@ type backMsg struct{}
 // Editing reports whether the title editor is open (used by tests).
 func (m BoardModel) Editing() bool { return m.editing }
 
+// Adding reports whether the add prompt is open (used by tests).
+func (m BoardModel) Adding() bool { return m.adding }
+
+// Confirming reports whether the delete confirmation is open (tests).
+func (m BoardModel) Confirming() bool { return m.confirming }
+
+// ChoosingRepo reports whether the repo menu is open (tests).
+func (m BoardModel) ChoosingRepo() bool { return m.choosingRepo }
+
+// DefaultRepo is the repo new issues would be created in ("" = drafts).
+func (m BoardModel) DefaultRepo() string { return m.addRepo }
+
+// Board exposes the active board model (tests and shell consumers).
+func (m AppModel) Board() *BoardModel { return m.board }
+
+// ProjectID, FieldID, Loading, Columns are read accessors for tests.
+func (m BoardModel) ProjectID() string { return m.projectID }
+func (m BoardModel) FieldID() string   { return m.fieldID }
+func (m BoardModel) Loading() bool     { return m.loading }
+func (m BoardModel) Columns() int      { return len(m.columns) }
+
+// Cards returns the cards of column i (tests).
+func (m BoardModel) Cards(col int) []board.Card { return m.cards(col) }
+
 // InputValue is the current editor text (used by tests).
 func (m BoardModel) InputValue() string { return m.input.Value() }
 
@@ -350,7 +474,13 @@ type itemMovedMsg struct {
 	fromCol, cardIdx, toCol int
 }
 
-type moveErrMsg struct{ err error }
+type errMsg struct{ err error }
+
+// Error makes errMsg readable in test failures and logs.
+func (e errMsg) Error() string { return e.err.Error() }
+
+// ErrorMsg is the exported view of errMsg for tests and shell users.
+type ErrorMsg = errMsg
 
 // titleEditedMsg carries the new title for local state update.
 type titleEditedMsg struct {
@@ -390,6 +520,110 @@ func (m *BoardModel) applyTitle(title string) {
 	m.errToast = ""
 }
 
+// itemAddedMsg carries a freshly created card for local insertion.
+type itemAddedMsg struct {
+	col  int
+	card board.Card
+}
+
+// itemDeletedMsg carries the removed card's position.
+type itemDeletedMsg struct {
+	col     int
+	cardIdx int
+}
+
+// addItemCmd creates a draft item in the selected column (mock: local only).
+func (m BoardModel) addItemCmd(title string) tea.Cmd {
+	col := m.colSelected
+	optionID := ""
+	if col >= 0 && col < len(m.columns) {
+		optionID = m.columns[col].OptionID // "" -> No Status, skip field write
+	}
+	if m.client == nil {
+		card := board.Card{ID: fmt.Sprintf("mock-%d", time.Now().UnixNano()), Title: title, Type: "DraftIssue"}
+		if m.addRepo != "" {
+			card.Type = "Issue"
+			card.Repo = m.addRepo
+			card.Number = int(time.Now().Unix() % 1000)
+		}
+		return func() tea.Msg { return itemAddedMsg{col: col, card: card} }
+	}
+	if m.projectID == "" || m.fieldID == "" {
+		return func() tea.Msg { return errMsg{fmt.Errorf("cannot add: project or status field unknown")} }
+	}
+	client, projectID, fieldID, repo := m.client, m.projectID, m.fieldID, m.addRepo
+	return func() tea.Msg {
+		if repo != "" {
+			created, err := client.CreateIssueInRepo(context.Background(), projectID, repo, title, fieldID, optionID)
+			if err != nil {
+				return errMsg{err}
+			}
+			return itemAddedMsg{col: col, card: board.Card{
+				ID: created.ItemID, Title: created.Title, Type: "Issue",
+				Number: created.Number, URL: created.URL, Repo: created.Repo,
+				ContentID: created.IssueID,
+			}}
+		}
+		id, err := client.AddDraftItem(context.Background(), projectID, title, fieldID, optionID)
+		if err != nil {
+			return errMsg{err}
+		}
+		return itemAddedMsg{col: col, card: board.Card{ID: id, Title: title, Type: "DraftIssue"}}
+	}
+}
+
+// deleteItemCmd removes the selected item from the board (mock: local only).
+func (m BoardModel) deleteItemCmd() tea.Cmd {
+	card, ok := m.selectedCard()
+	if !ok {
+		return nil
+	}
+	col, idx := m.colSelected, m.cardSel[m.colSelected]
+	if m.client == nil {
+		return func() tea.Msg { return itemDeletedMsg{col: col, cardIdx: idx} }
+	}
+	client, projectID, itemID := m.client, m.projectID, card.ID
+	return func() tea.Msg {
+		if err := client.DeleteItem(context.Background(), projectID, itemID); err != nil {
+			return errMsg{err}
+		}
+		return itemDeletedMsg{col: col, cardIdx: idx}
+	}
+}
+
+// applyAdd inserts the new card at the end of its column and selects it.
+func (m *BoardModel) applyAdd(msg itemAddedMsg) {
+	if msg.col < 0 || msg.col >= len(m.columns) {
+		return
+	}
+	m.columns[msg.col].Cards = append(m.columns[msg.col].Cards, msg.card)
+	m.colSelected = msg.col
+	m.cardSel[msg.col] = len(m.columns[msg.col].Cards) - 1
+	m.clampOffset()
+	m.adding = false
+	m.input.Blur()
+	m.errToast = ""
+}
+
+// applyDelete removes the card and keeps a sane selection.
+func (m *BoardModel) applyDelete(col, cardIdx int) {
+	if col < 0 || col >= len(m.columns) || cardIdx >= len(m.columns[col].Cards) {
+		return
+	}
+	cards := m.columns[col].Cards
+	m.columns[col].Cards = append(cards[:cardIdx], cards[cardIdx+1:]...)
+	if n := len(m.columns[col].Cards); n > 0 {
+		if cardIdx >= n {
+			cardIdx = n - 1
+		}
+		m.cardSel[col] = cardIdx
+	} else {
+		m.cardSel[col] = 0
+	}
+	m.confirming = false
+	m.errToast = ""
+}
+
 // moveCardCmd moves the selected card one column left (dir=-1) or right
 // (dir=+1). In mock mode (no client) the move is applied locally.
 func (m BoardModel) moveCardCmd(dir int) tea.Cmd {
@@ -417,7 +651,7 @@ func (m BoardModel) moveCardCmd(dir int) tea.Cmd {
 	client, projectID, fieldID := m.client, m.projectID, m.fieldID
 	return func() tea.Msg {
 		if err := client.SetItemStatus(context.Background(), projectID, card.ID, fieldID, targetOptionID); err != nil {
-			return moveErrMsg{err}
+			return errMsg{err}
 		}
 		return itemMovedMsg{from, cardIdx, to}
 	}
@@ -524,9 +758,15 @@ func (m BoardModel) renderDetail() string {
 	}
 	head, body := m.detailLayout()
 
-	vis := m.height - len(head) - 2
+	pane := strings.Join(head, "\n") + "\n" + strings.Join(body, "\n")
+	if m.editing {
+		pane = m.input.View() + "\n\n" + strings.Join(head[1:], "\n")
+		foot := pickerErrStyle.Render("enter save") + modalFoot(" · esc cancel")
+		return frame(m.width, m.height, head[0], pane, foot)
+	}
+	vis := m.height - len(head) - 6
 	if m.height == 0 {
-		vis = 15
+		vis = 12
 	}
 	if vis < 3 {
 		vis = 3
@@ -542,13 +782,103 @@ func (m BoardModel) renderDetail() string {
 	if end > len(body) {
 		end = len(body)
 	}
-
-	foot := bDimStyle.Render("j/k scroll · e edit title · esc back")
-	bottom := foot
-	if m.editing {
-		bottom = m.input.View() + "\n\n" + bDimStyle.Render("enter save · esc cancel")
+	shown := body[scroll:end]
+	if pad := vis - (end - scroll); pad > 0 {
+		shown = append(shown, strings.Repeat("\n", pad))
 	}
-	return strings.Join(head, "\n") + "\n" + strings.Join(body[scroll:end], "\n") + "\n\n" + bottom
+	foot := modalFoot("j/k scroll · e edit title · esc back")
+	return frame(m.width, m.height, head[0], pane+strings.Join(shown, "\n"), foot)
+}
+
+// clampRepoView keeps the selected repo row visible.
+func (m *BoardModel) clampRepoView() {
+	inner := m.height - 8
+	if m.height == 0 {
+		inner = 10
+	}
+	if inner < 1 {
+		inner = 1
+	}
+	if m.repoSel < m.repoTop {
+		m.repoTop = m.repoSel
+	}
+	if m.repoSel >= m.repoTop+inner {
+		m.repoTop = m.repoSel - inner + 1
+	}
+	if m.repoTop < 0 {
+		m.repoTop = 0
+	}
+}
+
+// renderAdd is the add screen: same full-screen treatment as title editing.
+// Shows where the item will be created (default repo or draft).
+func (m BoardModel) renderAdd() string {
+	colName := "No Status"
+	if m.colSelected >= 0 && m.colSelected < len(m.columns) {
+		colName = m.columns[m.colSelected].Option.Name
+	}
+
+	if m.choosingRepo {
+		// repo menu: the board's items come from several repositories
+		inner := m.height - 8
+		if m.height == 0 {
+			inner = 10
+		}
+		if inner < 1 {
+			inner = 1
+		}
+		var rows []string
+		for i, r := range m.repoCandidates {
+			line := "  " + r
+			if i == m.repoSel {
+				line = "> " + r
+			}
+			w := m.width - 6
+			if m.width == 0 {
+				w = 70
+			}
+			for lipgloss.Width(line) < w {
+				line += " "
+			}
+			if i == m.repoSel {
+				rows = append(rows, themeSelRow.Render(line))
+			} else {
+				rows = append(rows, line)
+			}
+		}
+		content := strings.Join(rows, "\n")
+		if m.repoTop > 0 || m.repoTop+inner < len(m.repoCandidates) {
+			content += "\n" + themeDim.Render(fmt.Sprintf("  ↑ %d-%d of %d ↓",
+				m.repoTop+1, min(m.repoTop+inner, len(m.repoCandidates)), len(m.repoCandidates)))
+		}
+		pane := themeDim.Render("The items on this board come from several repositories. Pick one:") +
+			"\n\n" + content
+		foot := modalFoot("j/k move · enter select · esc cancel")
+		return frame(m.width, m.height, modalTitle("New item — "+colName), pane, foot)
+	}
+
+	pane := m.input.View() + "\n\n"
+	if m.addRepo != "" {
+		pane += themeDim.Render("Will be created as an issue in " + m.addRepo + ".")
+	} else {
+		pane += themeDim.Render("Will be created as a draft item (no repositories to create an issue in).")
+	}
+	foot := modalFoot("enter create · esc cancel")
+	return frame(m.width, m.height, modalTitle("New item — "+colName), pane, foot)
+}
+
+// renderConfirm is the delete confirmation screen: same full-screen
+// treatment as add and title editing.
+func (m BoardModel) renderConfirm() string {
+	card, ok := m.selectedCard()
+	if !ok {
+		return "\nNo card selected.\n"
+	}
+	pane := themeCard.Render(cardTitle(card)) + "\n\n" +
+		themeErr.Render("This removes the item from the board.")
+	pane += "\n" + themeDim.Render("Drafts are deleted; linked issues and pull requests stay in their repository.")
+	foot := pickerErrStyle.Render("enter confirm delete") + modalFoot(" · esc cancel")
+	return frame(m.width, m.height, modalTitle("Delete item"), pane, foot)
 }
 
 // layout computes how many columns are visible and their equal width.
@@ -609,6 +939,12 @@ func (m BoardModel) View() string {
 	if m.loading {
 		return "\n" + m.spinner.View() + " loading board...\n"
 	}
+	if m.adding {
+		return m.renderAdd()
+	}
+	if m.confirming {
+		return m.renderConfirm()
+	}
 	if m.detail {
 		return m.renderDetail()
 	}
@@ -654,7 +990,7 @@ func (m BoardModel) View() string {
 		toast = "\n" + bDimStyle.Render(m.spinner.View()+" moving...")
 	}
 
-	foot := bDimStyle.Render("h/l columns · j/k cards · H/L move · enter detail · r refresh · esc back · q quit")
+	foot := bDimStyle.Render("h/l columns · j/k cards · H/L move · +/- add/del · enter detail · r refresh · esc back · q quit")
 	return head + "\n" + scroll + "\n\n" + row + "\n\n" + foot + toast
 }
 
