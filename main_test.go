@@ -36,7 +36,7 @@ func TestToBoardItemsCopiesEveryField(t *testing.T) {
 		Type:  "DraftIssue",
 	}}
 
-	out := toBoardItems(in)
+	out := board.FromGhItems(in)
 	if len(out) != 2 {
 		t.Fatalf("got %d items, want 2", len(out))
 	}
@@ -128,7 +128,7 @@ func TestLiveDraftTitleEdit(t *testing.T) {
 	waitFor := func(match func(gh.Item) bool) error {
 		deadline := time.Now().Add(10 * time.Second)
 		for time.Now().Before(deadline) {
-			items, err = fetchAllItems(ctx, client, project.ID, status.ID)
+			items, err = client.FetchAllItems(ctx, project.ID, status.ID)
 			if err != nil {
 				return err
 			}
@@ -144,7 +144,7 @@ func TestLiveDraftTitleEdit(t *testing.T) {
 	if err := waitFor(func(it gh.Item) bool { return it.ID == draftID }); err != nil {
 		t.Fatal(err)
 	}
-	cols := board.Build(status, toBoardItems(items))
+	cols := board.Build(status, board.FromGhItems(items))
 
 	var card *board.Card
 	var colIdx, cardIdx int
@@ -224,7 +224,7 @@ search:
 	found := false
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		items, err = fetchAllItems(ctx, client, project.ID, status.ID)
+		items, err = client.FetchAllItems(ctx, project.ID, status.ID)
 		if err != nil {
 			t.Fatal(err)
 		}

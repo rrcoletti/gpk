@@ -9,10 +9,7 @@ import (
 	"os"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-
 	"gpk/internal/auth"
-	"gpk/internal/board"
 	"gpk/internal/gh"
 	"gpk/internal/tui"
 )
@@ -36,7 +33,8 @@ func main() {
 		fatal(err)
 	}
 
-	login, err := gh.NewClient(token).ViewerLogin(ctx)
+	client := gh.NewClient(token)
+	login, err := client.ViewerLogin(ctx)
 	if err != nil {
 		fatal(err)
 	}
@@ -53,117 +51,9 @@ func main() {
 		return
 	}
 
-	if err := runPicker(ctx, token); err != nil {
+	if err := tui.RunApp(ctx, client); err != nil {
 		fatal(err)
 	}
-}
-
-// runPicker loops: project picker -> board -> esc back to the picker.
-// It returns when the user quits, either in the picker or on the board.
-func runPicker(ctx context.Context, token string) error {
-	client := gh.NewClient(token)
-
-	for {
-		prog := tea.NewProgram(tui.NewPickerModel(client))
-		final, err := prog.Run()
-		if err != nil {
-			return fmt.Errorf("project picker: %w", err)
-		}
-		pm, ok := final.(tui.PickerModel)
-		if !ok {
-			return fmt.Errorf("unexpected picker model type %T", final)
-		}
-		project, ok := pm.Selected()
-		if !ok {
-			return nil // user quit in the picker
-		}
-
-		again, err := runBoard(ctx, client, project)
-		if err != nil {
-			return err
-		}
-		if !again {
-			return nil // user quit the app from the board
-		}
-		// esc on the board: loop back to the picker
-	}
-}
-
-// runBoard fetches the project's fields and items and shows the board.
-// Returns true when the user pressed esc (back to picker), false on quit.
-func runBoard(ctx context.Context, client *gh.Client, project gh.Project) (bool, error) {
-	fields, err := client.GetProjectFields(ctx, project.ID)
-	if err != nil {
-		return false, err
-	}
-	status, ok := gh.StatusField(fields)
-	if !ok {
-		return false, fmt.Errorf("project %q has no single-select field to use as columns", project.Title)
-	}
-	titleField, _ := gh.TitleField(fields) // empty id: draft title edits fail gracefully
-
-	items, err := fetchAllItems(ctx, client, project.ID, status.ID)
-	if err != nil {
-		return false, err
-	}
-
-	refetch := func() ([]board.Item, error) {
-		items, err := fetchAllItems(ctx, client, project.ID, status.ID)
-		if err != nil {
-			return nil, err
-		}
-		return toBoardItems(items), nil
-	}
-
-	bm := tui.NewBoardModel(fmt.Sprintf("%s #%d", project.Title, project.Number),
-		client, project.ID, status.ID, titleField.ID, status, refetch)
-	bm.SetColumns(board.Build(status, toBoardItems(items)))
-	final, err := tea.NewProgram(bm).Run()
-	if err != nil {
-		return false, fmt.Errorf("board: %w", err)
-	}
-	fm, ok := final.(tui.BoardModel)
-	if !ok {
-		return false, fmt.Errorf("unexpected board model type %T", final)
-	}
-	return fm.Back(), nil
-}
-
-// fetchAllItems pages through the project's items.
-func fetchAllItems(ctx context.Context, client *gh.Client, projectID, statusFieldID string) ([]gh.Item, error) {
-	var all []gh.Item
-	cursor := ""
-	for {
-		page, next, err := client.GetProjectItems(ctx, projectID, statusFieldID, 100, cursor)
-		if err != nil {
-			return nil, err
-		}
-		all = append(all, page...)
-		if next == "" {
-			return all, nil
-		}
-		cursor = next
-	}
-}
-
-// toBoardItems converts API items to board items (currently 1:1).
-func toBoardItems(items []gh.Item) []board.Item {
-	out := make([]board.Item, len(items))
-	for i, it := range items {
-		out[i] = board.Item{
-			ID:        it.ID,
-			Title:     it.Title,
-			Type:      it.Type,
-			Number:    it.Number,
-			URL:       it.URL,
-			Assignee:  it.Assignee,
-			OptionID:  it.OptionID,
-			Body:      it.Body,
-			Repo:      it.Repo,
-			ContentID: it.ContentID,
-		}
-	}
-	return out
 }
 
 // printLinkOptions renders the URL five ways because terminal chains

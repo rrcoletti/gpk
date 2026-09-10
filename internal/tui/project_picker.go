@@ -6,19 +6,27 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"gpk/internal/gh"
 )
 
 var (
-	pickerTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
-	pickerDimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	pickerSelStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
-	pickerErrStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196"))
+	pickerTitleStyle = themeTitle
+	pickerDimStyle   = themeDim
+	pickerErrStyle   = themeErr
+	pickerListStyle  = themeList
+	pickerSelStyle   = themeSelRow
+	pickerNumStyle   = themeNum
 )
+
+// ProjectPickedMsg is emitted when the user selects a project.
+type ProjectPickedMsg struct {
+	Project gh.Project
+}
 
 // ProjectsLoadedMsg carries the fetched project list.
 type ProjectsLoadedMsg struct {
@@ -38,7 +46,7 @@ type PickerModel struct {
 	projects []gh.Project
 	cursor   string // next page cursor, "" when exhausted
 	selected int    // index into projects
-	chosen   bool   // true after Enter
+	top      int    // first visible row (scrolling viewport)
 	loading  bool
 	err      error
 
@@ -70,15 +78,6 @@ func (m PickerModel) fetchPage(cursor string) tea.Cmd {
 	}
 }
 
-// Selected returns the chosen project; ok is false if the user quit
-// without selecting anything.
-func (m PickerModel) Selected() (gh.Project, bool) {
-	if !m.chosen || m.err != nil || m.selected >= len(m.projects) {
-		return gh.Project{}, false
-	}
-	return m.projects[m.selected], true
-}
-
 func (m PickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -92,14 +91,23 @@ func (m PickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.selected > 0 {
 				m.selected--
 			}
+			m.clamp()
 		case "down", "j":
 			if m.selected < len(m.projects)-1 {
 				m.selected++
 			}
+			m.clamp()
+		case "home", "g":
+			m.selected = 0
+			m.clamp()
+		case "end", "G":
+			m.selected = len(m.projects) - 1
+			m.clamp()
 		case "enter":
 			if !m.loading && m.err == nil && m.selected < len(m.projects) {
-				m.chosen = true
-				return m, tea.Quit
+				return m, func() tea.Msg {
+					return ProjectPickedMsg{Project: m.projects[m.selected]}
+				}
 			}
 		}
 
@@ -122,42 +130,133 @@ func (m PickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m PickerModel) View() string {
-	var b strings.Builder
-
-	b.WriteString(pickerTitleStyle.Render("Select a project"))
-	b.WriteString("\n")
-
 	if m.err != nil {
-		b.WriteString("\n")
-		b.WriteString(pickerErrStyle.Render("Error: " + m.err.Error()))
-		b.WriteString("\n\n")
-		b.WriteString(pickerDimStyle.Render("press q to quit"))
-		return b.String()
+		return m.renderError()
 	}
-
 	if m.loading && len(m.projects) == 0 {
-		b.WriteString("\n" + m.spinner.View() + " loading projects...\n")
-		return b.String()
+		return m.renderShell("\n " + m.spinner.View() + " loading projects...")
+	}
+	if len(m.projects) == 0 {
+		return m.renderShell(pickerDimStyle.Render("no projects found for your account"))
 	}
 
-	b.WriteString("\n")
-	for i, p := range m.projects {
-		line := fmt.Sprintf("  #%d  %s", p.Number, p.Title)
-		if p.Closed {
-			line += " " + pickerDimStyle.Render("(closed)")
-		}
-		if i == m.selected {
-			b.WriteString(pickerSelStyle.Render("> " + line))
-		} else {
-			b.WriteString("  " + line)
-		}
-		b.WriteString("\n")
+	inner := m.listHeight()
+	if m.selected < m.top {
+		m.top = m.selected
+	}
+	if m.selected >= m.top+inner {
+		m.top = m.selected - inner + 1
+	}
+	if m.top < 0 {
+		m.top = 0
+	}
+	end := m.top + inner
+	if end > len(m.projects) {
+		end = len(m.projects)
 	}
 
+	var rows []string
+	for i := m.top; i < end; i++ {
+		rows = append(rows, m.renderRow(i))
+	}
+
+	scroll := ""
+	if m.top > 0 || end < len(m.projects) {
+		scroll = pickerDimStyle.Render(fmt.Sprintf(" \u2191 %d-%d of %d \u2193", m.top+1, end, len(m.projects)))
+	}
+
+	var content string
+	if pad := inner - (end - m.top); pad > 0 {
+		content = strings.Join(rows, "\n") + strings.Repeat("\n", pad)
+	} else {
+		content = strings.Join(rows, "\n")
+	}
+
+	list := pickerListStyle.Width(m.innerWidth()).Height(inner).Render(content)
+	foot := pickerDimStyle.Render("j/k move \u00b7 enter open board \u00b7 esc/q quit")
+	return m.header() + "\n" + scroll + "\n" + list + "\n" + foot
+}
+
+// renderRow draws one project row, padded to the full pane width,
+// highlighted when selected.
+func (m PickerModel) renderRow(i int) string {
+	p := m.projects[i]
+	line := fmt.Sprintf(" #%-4d %s", p.Number, p.Title)
+	if p.Closed {
+		line += "  (closed)"
+	}
+	w := m.innerWidth() - 2
+	for lipgloss.Width(line) < w {
+		line += " "
+	}
+	if i == m.selected {
+		return pickerSelStyle.Render(line)
+	}
+	if p.Closed {
+		return pickerDimStyle.Render(line)
+	}
+	return line
+}
+
+// clamp keeps the selected row inside the visible viewport.
+func (m *PickerModel) clamp() {
+	inner := m.listHeight()
+	if m.selected < m.top {
+		m.top = m.selected
+	}
+	if m.selected >= m.top+inner {
+		m.top = m.selected - inner + 1
+	}
+	if m.top < 0 {
+		m.top = 0
+	}
+	if m.top+inner > len(m.projects) {
+		m.top = len(m.projects) - inner
+	}
+	if m.top < 0 {
+		m.top = 0
+	}
+}
+
+// header is the top bar: app name, project count, pagination hint.
+func (m PickerModel) header() string {
+	t := fmt.Sprintf("gpk \u00b7 your projects (%d)", len(m.projects))
 	if m.cursor != "" {
-		b.WriteString(pickerDimStyle.Render("\n  more pages exist (pagination UI comes with the board)"))
+		t += " \u00b7 more available"
 	}
+	return pickerTitleStyle.Render(t)
+}
 
-	b.WriteString("\n" + pickerDimStyle.Render("j/k move · enter select · q quit"))
-	return b.String()
+// listHeight is the number of visible rows for the current terminal size.
+func (m PickerModel) listHeight() int {
+	if m.height == 0 {
+		return 10
+	}
+	h := m.height - 5 // header + scroll + borders + footer
+	if h < 3 {
+		h = 3
+	}
+	return h
+}
+
+func (m PickerModel) innerWidth() int {
+	w := m.width - 2 // borders
+	if m.width == 0 {
+		w = 76
+	}
+	if w < 20 {
+		w = 20
+	}
+	return w
+}
+
+// renderShell is the full-window frame around arbitrary content.
+func (m PickerModel) renderShell(inner string) string {
+	list := pickerListStyle.Width(m.innerWidth()).Height(m.listHeight()).Render(inner)
+	foot := pickerDimStyle.Render("esc/q quit")
+	return m.header() + "\n\n" + list + "\n" + foot
+}
+
+func (m PickerModel) renderError() string {
+	return m.renderShell("\n " + pickerErrStyle.Render("Error: "+m.err.Error()))
 }

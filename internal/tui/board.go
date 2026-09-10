@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"gpk/internal/auth"
 	"gpk/internal/board"
@@ -17,8 +18,9 @@ import (
 )
 
 const (
-	minColWidth  = 22
-	maxColWidth  = 32
+	minColWidth = 22
+	peekWidth   = 5 // sliver of the next column: 1 border cell + 4 chars,
+	// enough to show a 4-letter column name like "Done"
 	cardMaxLines = 4
 )
 
@@ -29,16 +31,14 @@ var optionColors = map[string]string{
 }
 
 var (
-	bTitleStyle   = lipgloss.NewStyle().Bold(true)
-	bDimStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	bTitleStyle   = themeTitle
+	bDimStyle     = themeDim
 	bColHeadStyle = lipgloss.NewStyle().Bold(true)
-	bColCount     = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	bCardStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
-	bSelStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
-	bColStyle     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("238"))
-	bSelColStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("205"))
+	bColCount     = themeDim
+	bCardStyle    = themeCard
+	bSelStyle     = themeSelRow
+	bColStyle     = themeList
+	bSelColStyle  = themeSelList
 )
 
 // refreshInterval is how often the board re-fetches items so changes made
@@ -75,7 +75,8 @@ type BoardModel struct {
 
 	detail       bool // detail view open for the selected card
 	detailScroll int
-	back         bool // esc pressed on the board: return to the picker
+	back         bool // mock mode: esc quits with Back()=true
+	appMode      bool // runs inside AppModel: esc emits backMsg instead
 
 	titleFieldID string // project's built-in Title field, for drafts
 	editing      bool   // editing the card title in detail view
@@ -190,6 +191,9 @@ func (m BoardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "q":
 			return m, tea.Quit
 		case "esc":
+			if m.appMode {
+				return m, func() tea.Msg { return backMsg{} }
+			}
 			m.back = true
 			return m, tea.Quit
 		case "enter":
@@ -312,9 +316,19 @@ func (m *BoardModel) applyRefresh(items []board.Item) {
 	}
 }
 
-// Back reports whether the user pressed esc on the board, requesting a
-// return to the project picker.
+// applySize feeds a terminal size into the board (used by the app shell
+// when creating boards after the initial WindowSizeMsg).
+func (m *BoardModel) applySize(w, h int) {
+	m.width, m.height = w, h
+	m.clampOffset()
+}
+
+// Back reports whether esc quit the board in mock mode. In appMode esc
+// never quits; it emits backMsg for the AppModel to switch screens.
 func (m BoardModel) Back() bool { return m.back }
+
+// backMsg asks the AppModel to return to the project picker.
+type backMsg struct{}
 
 // Editing reports whether the title editor is open (used by tests).
 func (m BoardModel) Editing() bool { return m.editing }
@@ -537,30 +551,43 @@ func (m BoardModel) renderDetail() string {
 	return strings.Join(head, "\n") + "\n" + strings.Join(body[scroll:end], "\n") + "\n\n" + bottom
 }
 
-// columnWidth computes equal column width for the current terminal size.
-func (m BoardModel) columnWidth() int {
-	if m.width == 0 {
-		return maxColWidth
+// layout computes how many columns are visible and their equal width.
+//
+// All columns share the terminal width when each box lands at least
+// minColWidth wide. A column's border costs 2 cells, so the usable width is
+// (width - 2*n) / n. If that falls below 22, one column is dropped and the
+// rest share (width - peekWidth - 2*n) / n, leaving a 5-cell sliver
+// (border + 4 chars) of the next column visible on the right edge.
+func (m BoardModel) layout() (visible, colW int) {
+	total := len(m.columns)
+	if m.width == 0 || total == 0 {
+		return 1, minColWidth
 	}
-	w := (m.width - 4) / m.visibleColumnCount()
+	if w := (m.width - 2*total) / total; w >= minColWidth {
+		return total, w
+	}
+	for n := total - 1; n >= 1; n-- {
+		if w := (m.width - peekWidth - 2*n) / n; w >= minColWidth {
+			return n, w
+		}
+	}
+	// single column always fits the remaining width
+	w := m.width - peekWidth - 2
 	if w < minColWidth {
 		w = minColWidth
 	}
-	if w > maxColWidth {
-		w = maxColWidth
-	}
-	return w
+	return 1, w
 }
 
-// visibleColumnCount is 1 before the first WindowSizeMsg.
+// columnWidth is the equal width every visible column gets.
+func (m BoardModel) columnWidth() int {
+	_, colW := m.layout()
+	return colW
+}
+
+// visibleColumnCount is how many columns are shown at once.
 func (m BoardModel) visibleColumnCount() int {
-	if m.width < minColWidth*2 {
-		return 1
-	}
-	n := m.width / minColWidth
-	if n < 1 {
-		n = 1
-	}
+	n, _ := m.layout()
 	return n
 }
 
@@ -601,6 +628,18 @@ func (m BoardModel) View() string {
 		cols = append(cols, m.renderColumn(i, colW))
 	}
 	row := lipgloss.JoinHorizontal(lipgloss.Top, cols...)
+	if end < len(m.columns) {
+		// peek: 5-cell sliver (border + 4 chars) of the next column.
+		// Truncation must be ANSI-aware: styled lines start with escape
+		// sequences and naive rune cutting turns them into garbage the
+		// terminal swallows, hiding the sliver entirely.
+		lines := strings.Split(m.renderColumn(end, colW), "\n")
+		for i, ln := range lines {
+			lines[i] = ansi.Truncate(ln, peekWidth, "")
+		}
+		sliver := strings.Join(lines, "\n")
+		row = lipgloss.JoinHorizontal(lipgloss.Top, row, sliver)
+	}
 
 	head := bTitleStyle.Render(m.header())
 	scroll := ""

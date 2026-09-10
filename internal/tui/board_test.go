@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -169,5 +170,89 @@ func TestDetailOpenClose(t *testing.T) {
 	}
 	if m.Back() {
 		t.Fatal("esc in detail must not trigger board-back")
+	}
+}
+
+func TestColumnWidthFillsTerminal(t *testing.T) {
+	// user rule: terminal width divided by column count; all columns visible
+	// when each gets >= minColWidth, else show fewer with a peek sliver.
+	status := gh.FieldDef{Name: "Status", Options: []gh.SelectOption{
+		{ID: "o1", Name: "A"}, {ID: "o2", Name: "B"}, {ID: "o3", Name: "C"},
+	}}
+	items := []board.Item{{ID: "i1", Title: "a", OptionID: "o1"}}
+	m := NewBoardModel("t", nil, "", "", "", status, nil)
+	m.SetColumns(board.Build(status, items)) // 4 columns: No Status + 3
+
+	// border cost: each column box adds 2 cells, so usable = width - 2*n
+	up, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 40})
+	m = up.(BoardModel)
+	if got := m.visibleColumnCount(); got != 4 {
+		t.Fatalf("200-8=192/4 = 48 >= 22: all 4 should fit, got %d", got)
+	}
+	if got := m.columnWidth(); got != 48 {
+		t.Fatalf("columnWidth = %d, want 48 ((200-8)/4)", got)
+	}
+
+	up, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	m = up.(BoardModel)
+	if got := m.visibleColumnCount(); got != 4 {
+		t.Fatalf("100-8=92/4 = 23 >= 22: all 4 should fit, got %d", got)
+	}
+	if got := m.columnWidth(); got != 23 {
+		t.Fatalf("columnWidth = %d, want 23", got)
+	}
+
+	// 96 cells: (96-8)/4 = 22 exactly: still fits
+	up, _ = m.Update(tea.WindowSizeMsg{Width: 96, Height: 40})
+	m = up.(BoardModel)
+	if got := m.visibleColumnCount(); got != 4 {
+		t.Fatalf("(96-8)/4 = 22: should still fit, got %d", got)
+	}
+
+	// 95 cells: drop to 3, reserve 5 peek (border+4 chars): (95-5-6)/3 = 28
+	up, _ = m.Update(tea.WindowSizeMsg{Width: 95, Height: 40})
+	m = up.(BoardModel)
+	if got := m.visibleColumnCount(); got != 3 {
+		t.Fatalf("want 3 visible at 95 cells, got %d", got)
+	}
+	if got := m.columnWidth(); got != 28 { // (95-5-6)/3
+		t.Fatalf("columnWidth = %d, want 28", got)
+	}
+	v := m.View()
+	if !strings.Contains(v, "← 1/4 →") {
+		t.Errorf("scroll indicator missing while 3 of 4 columns shown:\n%s", v)
+	}
+}
+
+func TestPeekSliverShown(t *testing.T) {
+	status := gh.FieldDef{Name: "Status", Options: []gh.SelectOption{
+		{ID: "o1", Name: "A"}, {ID: "o2", Name: "B"},
+	}}
+	items := []board.Item{{ID: "i1", Title: "a", OptionID: "o1"}}
+	m := NewBoardModel("t", nil, "", "", "", status, nil)
+	m.SetColumns(board.Build(status, items)) // 3 columns
+
+	up, _ := m.Update(tea.WindowSizeMsg{Width: 50, Height: 40})
+	m = up.(BoardModel)
+	// 50/3 with borders = 14 < 22 -> 1 column of 44 + 4 peek of the second
+	if got := m.visibleColumnCount(); got != 1 {
+		t.Fatalf("want 1 visible, got %d", got)
+	}
+	v := m.View()
+	if !strings.Contains(v, "← 1/3 →") {
+		t.Errorf("expected 1/3 scroll indicator with peek:\n%s", v)
+	}
+	// the peek sliver must be exactly peekWidth wide: each row of the sliver
+	// is 4 cells (first column line in view)
+	for _, line := range strings.Split(v, "\n") {
+		if strings.Contains(line, "╭") && !strings.Contains(line, "╮") {
+			// a border line ending without a right corner = the peek column
+			idx := strings.LastIndex(line, "╭")
+			tail := line[idx:]
+			if len([]rune(tail)) > peekWidth {
+				t.Errorf("peek sliver is %d cells, want %d: %q", len([]rune(tail)), peekWidth, tail)
+			}
+			break
+		}
 	}
 }

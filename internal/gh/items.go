@@ -153,3 +153,20 @@ func (c *Client) GetProjectItems(ctx context.Context, projectID, statusFieldID s
 	}
 	return items, cursor, nil
 }
+
+// FetchAllItems pages through all items of a project.
+func (c *Client) FetchAllItems(ctx context.Context, projectID, statusFieldID string) ([]Item, error) {
+	var all []Item
+	cursor := ""
+	for {
+		page, next, err := c.GetProjectItems(ctx, projectID, statusFieldID, 100, cursor)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, page...)
+		if next == "" {
+			return all, nil
+		}
+		cursor = next
+	}
+}
