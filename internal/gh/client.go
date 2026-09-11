@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -40,6 +41,11 @@ type graphQLResponse struct {
 	Errors []graphQLError  `json:"errors"`
 }
 
+// ErrUnauthorized is returned when GitHub rejects the credential (HTTP 401),
+// so callers can offer re-authentication. Scope problems surface as GraphQL
+// errors (403-style messages), not this.
+var ErrUnauthorized = errors.New("github rejected the token (401)")
+
 // Query executes a GraphQL query and unmarshals data into out.
 func (c *Client) Query(ctx context.Context, query string, vars map[string]any, out any) error {
 	body, err := json.Marshal(graphQLRequest{Query: query, Variables: vars})
@@ -60,7 +66,7 @@ func (c *Client) Query(ctx context.Context, query string, vars map[string]any, o
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("github rejected the token (401): it may be expired or lack 'repo'/'read:project' scopes")
+		return fmt.Errorf("%w: the token is invalid, expired, or was revoked", ErrUnauthorized)
 	}
 
 	var gr graphQLResponse

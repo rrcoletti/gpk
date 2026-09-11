@@ -72,7 +72,7 @@ The token is stored in `~/.config/gpk/env` with mode 0600, in a 0700 directory:
 
     GITHUB_TOKEN=ghp_yourtokenhere
 
-Every later run reads that file and goes straight to the project picker. To re-authenticate, for example after a scope change, delete the file and run gpk again. A `GITHUB_TOKEN` environment variable takes precedence over the file.
+Every later run reads that file and goes straight to the project picker. If GitHub has revoked the stored token, gpk says so and offers to remove the file and re-authenticate on the spot. A `GITHUB_TOKEN` environment variable takes precedence over the file (it is never deleted; a rejected env token just fails with a clear message).
 
 ## Using the board
 

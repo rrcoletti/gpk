@@ -2,11 +2,14 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"gpk/internal/auth"
@@ -28,13 +31,19 @@ func main() {
 	}
 
 	ctx := context.Background()
-	token, err := obtainToken(ctx)
+	token, fromEnv, err := obtainToken(ctx)
 	if err != nil {
 		fatal(err)
 	}
 
 	client := gh.NewClient(token)
 	login, err := client.ViewerLogin(ctx)
+	if errors.Is(err, gh.ErrUnauthorized) {
+		if fromEnv {
+			fatal(fmt.Errorf("GitHub rejected the token in $%s: it is invalid, expired, or was revoked. Fix or unset it and run gpk again", auth.EnvVar))
+		}
+		login, err = reauth(ctx)
+	}
 	if err != nil {
 		fatal(err)
 	}
@@ -56,34 +65,29 @@ func main() {
 	}
 }
 
-// printLinkOptions renders the URL five ways because terminal chains
-// (terminal + ssh + multiplexer) differ in which link format they honor.
-// The user clicks whichever one their setup renders as a link.
-func printLinkOptions(url string) {
-	fmt.Println("Verification URL (pick the first one that is clickable):")
-	fmt.Println("  [1] plain:    " + url)
-	fmt.Println("  [2] link:     " + auth.Hyperlink(url, url, "", false))
-	fmt.Println("  [3] link:     " + auth.Hyperlink(url, url, "", true))
-	fmt.Println("  [4] link:     " + auth.Hyperlink(url, "open in browser", "gpk", false))
-	fmt.Println("  [5] link:     " + auth.Hyperlink(url, "open in browser", "gpk", true))
-}
-
 // obtainToken resolves the token: env var, then token file, then the
-// interactive device flow (result persisted to the token file).
-func obtainToken(ctx context.Context) (string, error) {
+// interactive device flow (result persisted to the token file). fromEnv
+// reports whether the token came from the environment (not deletable).
+func obtainToken(ctx context.Context) (token string, fromEnv bool, err error) {
 	src, err := auth.DefaultSource()
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	token, err := src.GetToken()
+	token, err = src.GetToken()
 	if err == nil {
-		return token, nil
+		return token, os.Getenv(auth.EnvVar) != "", nil
 	}
-	if err != auth.ErrNoToken {
-		return "", err
+	if !errors.Is(err, auth.ErrNoToken) {
+		return "", false, err
 	}
+	token, err = deviceFlow(ctx, "No GitHub token found.")
+	return token, false, err
+}
 
-	fmt.Println("No GitHub token found. Starting device flow.")
+// deviceFlow runs the interactive OAuth device flow and persists the result.
+// intro explains why the flow is starting (no token / dead token).
+func deviceFlow(ctx context.Context, intro string) (string, error) {
+	fmt.Println(intro, "Starting device flow.")
 	fmt.Println()
 
 	hc := &http.Client{Timeout: 30 * time.Second}
@@ -92,11 +96,14 @@ func obtainToken(ctx context.Context) (string, error) {
 		return "", err
 	}
 
-	fmt.Printf("Open the verification URL in your browser and enter code: %s\n", dc.UserCode)
-	printLinkOptions(dc.VerificationURL)
+	// Single link format (OSC 8, BEL terminator, URL as its own label): the
+	// variant that survived testing across the user's terminal setups. The
+	// plain URL also stays visible to terminals without OSC 8 support.
+	fmt.Printf("Open %s in your browser and enter code: %s\n",
+		auth.Hyperlink(dc.VerificationURL, dc.VerificationURL, "", true), dc.UserCode)
 	fmt.Println("Waiting for approval...")
 
-	token, err = auth.PollToken(ctx, hc, dc, nil)
+	token, err := auth.PollToken(ctx, hc, dc, nil)
 	if err != nil {
 		return "", err
 	}
@@ -110,6 +117,35 @@ func obtainToken(ctx context.Context) (string, error) {
 	}
 	fmt.Printf("Token saved to %s\n", store.Path)
 	return token, nil
+}
+
+// reauth handles a rejected stored token: ask the user, delete the token
+// file, run the device flow again, and verify the new token. Returns the
+// login on success.
+func reauth(ctx context.Context) (string, error) {
+	store, err := auth.NewFileStore()
+	if err != nil {
+		return "", err
+	}
+	fmt.Printf("\nGitHub rejected the token stored in %s: it is invalid, expired, or was revoked.\n", store.Path)
+	fmt.Print("Remove it and authenticate again? [Y/n] ")
+
+	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "", "y", "yes":
+	default:
+		return "", fmt.Errorf("token rejected; remove %s manually and run gpk again", store.Path)
+	}
+	if err := os.Remove(store.Path); err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+
+	token, err := deviceFlow(ctx, "Old token removed.")
+	if err != nil {
+		return "", err
+	}
+	client := gh.NewClient(token)
+	return client.ViewerLogin(ctx)
 }
 
 func fatal(err error) {
