@@ -92,6 +92,7 @@ type BoardModel struct {
 	repoSel        int
 	repoTop        int
 	confirming     bool // delete confirmation pending
+	helping        bool // command overlay open (toggled with ?)
 }
 
 // NewBoardModel creates the board; cards are set later via SetColumns.
@@ -249,9 +250,21 @@ func (m BoardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if m.helping {
+			// overlay eats everything except close/quit
+			switch msg.String() {
+			case "ctrl+c", "q":
+				return m, tea.Quit
+			case "esc", "?":
+				m.helping = false
+			}
+			return m, nil
+		}
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
+		case "?":
+			m.helping = true
 		case "+":
 			if !m.adding && !m.confirming {
 				m.addRepo = m.projectDefaultRepo
@@ -987,8 +1000,64 @@ func (m BoardModel) View() string {
 		toast = "\n" + bDimStyle.Render(m.spinner.View()+" moving...")
 	}
 
-	foot := bDimStyle.Render(" ←/→ or h/l: columns · ↑/↓ or j/k: cards · H/L: move · +/-: add/del · Enter: detail · r: refresh · Esc: back · q: quit")
-	return head + "\n\n" + row + "\n\n" + foot + toast
+	foot := bDimStyle.Render(" ?: commands · Esc: back · q: quit")
+	view := head + "\n\n" + row + "\n\n" + foot + toast
+	if m.helping {
+		return m.renderHelp(view)
+	}
+	return view
+}
+
+// renderHelp stamps a centered command-list box on top of the board view.
+// Stamping is ANSI-aware: styled bg lines are cut with x/ansi so the escape
+// sequences survive (the peek sliver needed the same treatment).
+func (m BoardModel) renderHelp(bg string) string {
+	rows := [][2]string{
+		{"h/l or ←/→", "switch column"},
+		{"j/k or ↑/↓", "move in column"},
+		{"g / G", "first / last card"},
+		{"H / L", "move card left / right"},
+		{"+", "add item"},
+		{"-", "delete item (asks to confirm)"},
+		{"Enter", "open item detail"},
+		{"e", "edit title (in detail view)"},
+		{"r", "refresh board"},
+		{"Esc", "back / close help"},
+		{"q", "quit"},
+	}
+	var lines []string
+	lines = append(lines, themeTitle.Render("Commands"), "")
+	for _, r := range rows {
+		lines = append(lines, fmt.Sprintf("%-14s%s", r[0], r[1]))
+	}
+	lines = append(lines, "", modalFoot("? or Esc close"))
+	w := 0
+	for _, l := range lines {
+		if lw := lipgloss.Width(l); lw > w {
+			w = lw
+		}
+	}
+	box := themeSelList.Width(w).Render(strings.Join(lines, "\n"))
+	x := (lipgloss.Width(bg) - lipgloss.Width(box)) / 2
+	y := (lipgloss.Height(bg) - lipgloss.Height(box)) / 2
+	if x < 0 {
+		x = 0
+	}
+	if y < 0 {
+		y = 0
+	}
+
+	bgLines := strings.Split(bg, "\n")
+	boxLines := strings.Split(box, "\n")
+	for i, b := range boxLines {
+		by := y + i
+		if by < 0 || by >= len(bgLines) {
+			continue
+		}
+		left := ansi.Truncate(bgLines[by], x, "")
+		bgLines[by] = left + b + ansi.TruncateLeft(bgLines[by], x+lipgloss.Width(b), "")
+	}
+	return strings.Join(bgLines, "\n")
 }
 
 // renderColumn draws one column with header (colored, with count) and cards.

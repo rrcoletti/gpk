@@ -548,3 +548,35 @@ func TestAddSingleRepoSkipsMenu(t *testing.T) {
 		t.Fatalf("inferred repo = %q", m.DefaultRepo())
 	}
 }
+
+func TestHelpOverlay(t *testing.T) {
+	m := mockBoard(t)
+	up, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 25})
+	m = up.(BoardModel)
+
+	up, cmd := m.Update(key("?"))
+	m = up.(BoardModel)
+	if cmd != nil {
+		t.Fatalf("? should not return a cmd")
+	}
+	v := m.View()
+	if !strings.Contains(v, "Commands") || !strings.Contains(v, "move in column") {
+		t.Errorf("help overlay not shown:\n%s", v)
+	}
+	// overlay eats navigation keys
+	up, _ = m.Update(key("l"))
+	m = up.(BoardModel)
+	if !strings.Contains(m.View(), "Commands") {
+		t.Error("overlay should stay open on other keys")
+	}
+
+	// esc closes; in app mode it must not emit backMsg
+	up, cmd = m.Update(key("esc"))
+	m = up.(BoardModel)
+	if cmd != nil {
+		t.Errorf("esc while helping must not emit backMsg, got %v", cmd)
+	}
+	if strings.Contains(m.View(), "Commands") {
+		t.Error("overlay should be closed after esc")
+	}
+}
