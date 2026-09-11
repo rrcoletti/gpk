@@ -67,12 +67,15 @@ func TestPeekAtUserBoardWidths(t *testing.T) {
 func peekLines(lines []string) (border, name string) {
 	for i, l := range lines {
 		trimmed := strings.TrimRight(l, " ")
-		if strings.HasSuffix(trimmed, "╭────") {
-			border = trimmed
-			if i+1 < len(lines) {
-				name = lines[i+1]
-			}
-			return border, name
+		idx := strings.LastIndex(trimmed, "╭")
+		if idx < 0 || strings.Contains(trimmed[idx:], "╮") {
+			continue
+		}
+		if len(trimmed)-idx < peekWidth {
+			continue
+		}
+		if i+1 < len(lines) {
+			return trimmed, lines[i+1]
 		}
 	}
 	return "", ""

@@ -20,6 +20,10 @@ import (
 const (
 	minColWidth = 22
 	peekWidth   = 5 // sliver of the next column: 1 border cell + 4 chars,
+	// peekSpace is the gap kept right of the peek sliver; the layout
+	// reserves peekWidth+peekSpace and the sliver absorbs the division
+	// remainder on top of peekWidth.
+	peekSpace = 1
 	// enough to show a 4-letter column name like "Done"
 	cardMaxLines = 4
 )
@@ -887,8 +891,9 @@ func (m BoardModel) renderConfirm(bg string) string {
 // All columns share the terminal width when each box lands at least
 // minColWidth wide. A column's border costs 2 cells, so the usable width is
 // (width - 2*n) / n. If that falls below 22, one column is dropped and the
-// rest share (width - peekWidth - 2*n) / n, leaving a 5-cell sliver
-// (border + 4 chars) of the next column visible on the right edge.
+// rest share (width - peekWidth - peekSpace - 2*n) / n. The scroll state
+// leaves room for a peekWidth sliver (border + 4 chars) of the next column
+// plus one trailing space; the division remainder widens the sliver.
 func (m BoardModel) layout() (visible, colW int) {
 	total := len(m.columns)
 	if m.width == 0 || total == 0 {
@@ -898,12 +903,12 @@ func (m BoardModel) layout() (visible, colW int) {
 		return total, w
 	}
 	for n := total - 1; n >= 1; n-- {
-		if w := (m.width - peekWidth - 2*n) / n; w >= minColWidth {
+		if w := (m.width - peekWidth - peekSpace - 2*n) / n; w >= minColWidth {
 			return n, w
 		}
 	}
 	// single column always fits the remaining width
-	w := m.width - peekWidth - 2
+	w := m.width - peekWidth - peekSpace - 2
 	if w < minColWidth {
 		w = minColWidth
 	}
@@ -1005,9 +1010,12 @@ func (m BoardModel) renderBoard() string {
 		// Truncation must be ANSI-aware: styled lines start with escape
 		// sequences and naive rune cutting turns them into garbage the
 		// terminal swallows, hiding the sliver entirely.
+		// sliver width: reserved peekWidth + the division remainder, keeping
+		// one cell of space at the terminal's right edge
+		sliverW := m.width - (end-m.colOffset)*(colW+2) - peekSpace
 		lines := strings.Split(m.renderColumn(end, colW), "\n")
 		for i, ln := range lines {
-			lines[i] = ansi.Truncate(ln, peekWidth, "")
+			lines[i] = ansi.Truncate(ln, sliverW, "")
 		}
 		sliver := strings.Join(lines, "\n")
 		row = lipgloss.JoinHorizontal(lipgloss.Top, row, sliver)

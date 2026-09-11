@@ -209,14 +209,14 @@ func TestColumnWidthFillsTerminal(t *testing.T) {
 		t.Fatalf("(72-6)/3 = 22: should still fit, got %d", got)
 	}
 
-	// 71 cells: 21 < 22 -> 2 visible, reserve 5 peek: (71-5-4)/2 = 31
+	// 71 cells: 21 < 22 -> 2 visible, reserve 6 (peek+space): (71-6-4)/2 = 30
 	up, _ = m.Update(tea.WindowSizeMsg{Width: 71, Height: 40})
 	m = up.(BoardModel)
 	if got := m.visibleColumnCount(); got != 2 {
 		t.Fatalf("want 2 visible at 71 cells, got %d", got)
 	}
-	if got := m.columnWidth(); got != 31 { // (71-5-4)/2
-		t.Fatalf("columnWidth = %d, want 31", got)
+	if got := m.columnWidth(); got != 30 { // (71-6-4)/2
+		t.Fatalf("columnWidth = %d, want 30", got)
 	}
 	v := m.View()
 	if !strings.Contains(v, "← 1/3 →") {
