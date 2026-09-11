@@ -17,7 +17,7 @@ import (
 	"gpk/internal/tui"
 )
 
-var version = "0.0.1-dev"
+var version = "0.0.1"
 
 func main() {
 	whoami := flag.Bool("whoami", false, "verify auth: print the GitHub login the stored token resolves to")
@@ -31,6 +31,7 @@ func main() {
 	}
 
 	ctx := context.Background()
+	tui.Version = version
 	token, fromEnv, err := obtainToken(ctx)
 	if err != nil {
 		fatal(err)
@@ -47,6 +48,8 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
+
+	tui.User = login
 
 	if *whoami {
 		fmt.Println("authenticated as", login)

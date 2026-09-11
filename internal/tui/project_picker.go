@@ -19,7 +19,6 @@ var (
 	pickerDimStyle   = themeDim
 	pickerErrStyle   = themeErr
 	pickerListStyle  = themeList
-	pickerSelStyle   = themeSelRow
 	pickerNumStyle   = themeNum
 )
 
@@ -173,7 +172,7 @@ func (m PickerModel) View() string {
 	}
 
 	list := pickerListStyle.Width(m.innerWidth()).Height(inner).Render(content)
-	foot := pickerDimStyle.Render("j/k move \u00b7 enter open board \u00b7 esc/q quit")
+	foot := pickerDimStyle.Render(" \u2191/\u2193 or j/k: move \u00b7 Enter: select \u00b7 q or Esc: quit")
 	return m.header() + "\n" + scroll + "\n" + list + "\n" + foot
 }
 
@@ -181,7 +180,11 @@ func (m PickerModel) View() string {
 // highlighted when selected.
 func (m PickerModel) renderRow(i int) string {
 	p := m.projects[i]
-	line := " " + p.Title
+	prefix := "  " // aligns non-selected rows with the selected row's "> "
+	if i == m.selected {
+		prefix = "> "
+	}
+	line := prefix + p.Title
 	if p.Closed {
 		line += "  (closed)"
 	}
@@ -220,7 +223,7 @@ func (m *PickerModel) clamp() {
 
 // header is the top bar: app name, project count, pagination hint.
 func (m PickerModel) header() string {
-	t := fmt.Sprintf("gpk \u00b7 your projects (%d)", len(m.projects))
+	t := fmt.Sprintf(" gpk %s \u00b7 %s's GitHub \u00b7 %d project(s)", Version, User, len(m.projects))
 	if m.cursor != "" {
 		t += " \u00b7 more available"
 	}
@@ -253,7 +256,7 @@ func (m PickerModel) innerWidth() int {
 // renderShell is the full-window frame around arbitrary content.
 func (m PickerModel) renderShell(inner string) string {
 	list := pickerListStyle.Width(m.innerWidth()).Height(m.listHeight()).Render(inner)
-	foot := pickerDimStyle.Render("esc/q quit")
+	foot := pickerDimStyle.Render(" q or Esc: quit")
 	return m.header() + "\n\n" + list + "\n" + foot
 }
 

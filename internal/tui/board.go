@@ -460,13 +460,13 @@ func (m BoardModel) Cards(col int) []board.Card { return m.cards(col) }
 // InputValue is the current editor text (used by tests).
 func (m BoardModel) InputValue() string { return m.input.Value() }
 
-// header is the title line with a live item count.
+// header is the title line: app name + version, project, live item count.
 func (m BoardModel) header() string {
 	n := 0
 	for _, c := range m.columns {
 		n += len(c.Cards)
 	}
-	return fmt.Sprintf("%s — %d items", m.titleBase, n)
+	return fmt.Sprintf("gpk %s · Project %s · %d item(s)", Version, m.titleBase, n)
 }
 
 // itemMovedMsg is sent after a successful (or mock) card move.
@@ -977,11 +977,8 @@ func (m BoardModel) View() string {
 		row = lipgloss.JoinHorizontal(lipgloss.Top, row, sliver)
 	}
 
-	head := bTitleStyle.Render(m.header())
-	scroll := ""
-	if m.colOffset > 0 || end < len(m.columns) {
-		scroll = bDimStyle.Render(fmt.Sprintf("  ← %d/%d →", m.colOffset+1, len(m.columns)))
-	}
+	head := bTitleStyle.Render(" "+m.header()) +
+		bDimStyle.Render(fmt.Sprintf(" · ← %d/%d →", m.colSelected+1, len(m.columns)))
 
 	toast := ""
 	if m.errToast != "" {
@@ -990,8 +987,8 @@ func (m BoardModel) View() string {
 		toast = "\n" + bDimStyle.Render(m.spinner.View()+" moving...")
 	}
 
-	foot := bDimStyle.Render("h/l columns · j/k cards · H/L move · +/- add/del · enter detail · r refresh · esc back · q quit")
-	return head + "\n" + scroll + "\n\n" + row + "\n\n" + foot + toast
+	foot := bDimStyle.Render(" ←/→ or h/l: columns · ↑/↓ or j/k: cards · H/L: move · +/-: add/del · Enter: detail · r: refresh · Esc: back · q: quit")
+	return head + "\n\n" + row + "\n\n" + foot + toast
 }
 
 // renderColumn draws one column with header (colored, with count) and cards.
@@ -1062,7 +1059,7 @@ func (m BoardModel) bodyHeight() int {
 	if m.height == 0 {
 		return 12
 	}
-	h := m.height - 7
+	h := m.height - 6
 	if h < 6 {
 		h = 6
 	}

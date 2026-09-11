@@ -5,9 +5,16 @@ package tui
 
 import "github.com/charmbracelet/lipgloss"
 
+// Version is shown in the picker header; main sets it at startup.
+var Version = "dev"
+
+// User is the GitHub login shown in the picker header; main sets it after
+// verifying the token.
+var User = ""
+
 // Accent and neutral palette (256-color).
 const (
-	colorAccent = "205" // selection / focus
+	colorAccent = "75" // selection / focus (blue)
 	colorDim    = "241"
 	colorBorder = "238"
 	colorError  = "196"
@@ -34,10 +41,15 @@ var (
 	themeSelList = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color(colorAccent))
 
-	// themeSelRow highlights the selected row across the full width.
+	// themeSelRow highlights the selected row: blue, no background — the
+	// "> " prefix is the visual marker (board cards, repo menu).
 	themeSelRow = lipgloss.NewStyle().Bold(true).
-			Foreground(lipgloss.Color(colorAccent)).
-			Background(lipgloss.Color(colorSelBg))
+			Foreground(lipgloss.Color(colorAccent))
+
+	// pickerSelStyle marks the menu's selected row: blue, no background —
+	// a "> " prefix on the row is the visual marker instead.
+	pickerSelStyle = lipgloss.NewStyle().Bold(true).
+			Foreground(lipgloss.Color(colorAccent))
 
 	// themeNum tints numbers (issue/project numbers, URLs).
 	themeNum = lipgloss.NewStyle().Foreground(lipgloss.Color(colorInfo))

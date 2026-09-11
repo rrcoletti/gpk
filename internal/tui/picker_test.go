@@ -9,6 +9,8 @@ import (
 	"gpk/internal/gh"
 )
 
+func init() { User = "user" }
+
 func TestPickerFullWindowLayout(t *testing.T) {
 	m := NewPickerModel(nil)
 	var ps []gh.Project
@@ -41,10 +43,10 @@ func TestPickerFullWindowLayout(t *testing.T) {
 		t.Errorf("scroll indicator wrong:\n%s", v)
 	}
 	// full-window frame must be present
-	if !strings.Contains(v, "gpk · your projects (60)") {
+	if !strings.Contains(v, " gpk dev · user's GitHub · 60 project(s)") {
 		t.Error("missing header")
 	}
-	if !strings.Contains(v, "enter open board") {
+	if !strings.Contains(v, "Enter: select") {
 		t.Error("missing footer")
 	}
 }
@@ -56,7 +58,7 @@ func TestPickerSmallTerminal(t *testing.T) {
 	up, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 8})
 	m = up.(PickerModel)
 	v := m.View()
-	if !strings.Contains(v, "gpk · your projects (1)") || !strings.Contains(v, "one") {
+	if !strings.Contains(v, " gpk dev · user's GitHub · 1 project(s)") || !strings.Contains(v, "one") {
 		t.Errorf("small-terminal view broken:\n%s", v)
 	}
 }
