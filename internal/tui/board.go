@@ -1022,8 +1022,7 @@ func (m BoardModel) renderBoard() string {
 	}
 
 	head := themeWhite.Render(" gpk "+Version) +
-		bTitleStyle.Render(" · "+m.header()) +
-		bDimStyle.Render(fmt.Sprintf(" [← %d/%d →]", m.colSelected+1, len(m.columns)))
+		bTitleStyle.Render(" · "+m.header())
 
 	toast := ""
 	if m.errToast != "" {
@@ -1032,7 +1031,14 @@ func (m BoardModel) renderBoard() string {
 		toast = "\n" + bDimStyle.Render(m.spinner.View()+" moving...")
 	}
 
-	foot := bDimStyle.Render(" ?: commands · Esc: back · q: quit")
+	hints := bDimStyle.Render(" ?: commands · Esc: back · q: quit")
+	hintsW := lipgloss.Width(" ?: commands · Esc: back · q: quit")
+	nav := fmt.Sprintf("[← %d/%d →]", m.colSelected+1, len(m.columns))
+	gap := m.width - 1 - hintsW - lipgloss.Width(nav)
+	if gap < 1 {
+		gap = 1
+	}
+	foot := hints + strings.Repeat(" ", gap) + bDimStyle.Render(nav)
 	return head + "\n\n" + row + "\n" + foot + toast
 }
 
@@ -1065,7 +1071,7 @@ func (m BoardModel) renderColumn(i, colW int) string {
 	}
 	head := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(color)).
 		Render(truncate(c.Option.Name, colW-4))
-	count := bColCount.Render(fmt.Sprintf(" %d", len(c.Cards)))
+	count := bColCount.Render(fmt.Sprintf(" (%d)", len(c.Cards)))
 	header := head + count
 
 	var lines []string
