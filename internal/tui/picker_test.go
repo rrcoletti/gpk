@@ -46,7 +46,7 @@ func TestPickerFullWindowLayout(t *testing.T) {
 	if !strings.Contains(v, " gpk dev · user's GitHub · 60 project(s)") {
 		t.Error("missing header")
 	}
-	if !strings.Contains(v, "Enter: select") {
+	if !strings.Contains(v, "q or Esc: quit") {
 		t.Error("missing footer")
 	}
 }

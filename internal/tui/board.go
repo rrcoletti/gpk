@@ -991,7 +991,7 @@ func (m BoardModel) View() string {
 	}
 
 	head := bTitleStyle.Render(" "+m.header()) +
-		bDimStyle.Render(fmt.Sprintf(" · ← %d/%d →", m.colSelected+1, len(m.columns)))
+		bDimStyle.Render(fmt.Sprintf(" [← %d/%d →]", m.colSelected+1, len(m.columns)))
 
 	toast := ""
 	if m.errToast != "" {
@@ -1001,16 +1001,14 @@ func (m BoardModel) View() string {
 	}
 
 	foot := bDimStyle.Render(" ?: commands · Esc: back · q: quit")
-	view := head + "\n\n" + row + "\n\n" + foot + toast
+	view := head + "\n\n" + row + "\n" + foot + toast
 	if m.helping {
 		return m.renderHelp(view)
 	}
 	return view
 }
 
-// renderHelp stamps a centered command-list box on top of the board view.
-// Stamping is ANSI-aware: styled bg lines are cut with x/ansi so the escape
-// sequences survive (the peek sliver needed the same treatment).
+// renderHelp overlays the centered command list on top of the board view.
 func (m BoardModel) renderHelp(bg string) string {
 	rows := [][2]string{
 		{"h/l or ←/→", "switch column"},
@@ -1025,39 +1023,7 @@ func (m BoardModel) renderHelp(bg string) string {
 		{"Esc", "back / close help"},
 		{"q", "quit"},
 	}
-	var lines []string
-	lines = append(lines, themeTitle.Render("Commands"), "")
-	for _, r := range rows {
-		lines = append(lines, fmt.Sprintf("%-14s%s", r[0], r[1]))
-	}
-	lines = append(lines, "", modalFoot("? or Esc close"))
-	w := 0
-	for _, l := range lines {
-		if lw := lipgloss.Width(l); lw > w {
-			w = lw
-		}
-	}
-	box := themeSelList.Width(w).Render(strings.Join(lines, "\n"))
-	x := (lipgloss.Width(bg) - lipgloss.Width(box)) / 2
-	y := (lipgloss.Height(bg) - lipgloss.Height(box)) / 2
-	if x < 0 {
-		x = 0
-	}
-	if y < 0 {
-		y = 0
-	}
-
-	bgLines := strings.Split(bg, "\n")
-	boxLines := strings.Split(box, "\n")
-	for i, b := range boxLines {
-		by := y + i
-		if by < 0 || by >= len(bgLines) {
-			continue
-		}
-		left := ansi.Truncate(bgLines[by], x, "")
-		bgLines[by] = left + b + ansi.TruncateLeft(bgLines[by], x+lipgloss.Width(b), "")
-	}
-	return strings.Join(bgLines, "\n")
+	return overlayCenter(bg, helpBox(rows))
 }
 
 // renderColumn draws one column with header (colored, with count) and cards.
@@ -1128,7 +1094,7 @@ func (m BoardModel) bodyHeight() int {
 	if m.height == 0 {
 		return 12
 	}
-	h := m.height - 6
+	h := m.height - 5
 	if h < 6 {
 		h = 6
 	}

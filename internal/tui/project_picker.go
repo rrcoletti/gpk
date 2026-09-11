@@ -46,6 +46,7 @@ type PickerModel struct {
 	cursor   string // next page cursor, "" when exhausted
 	selected int    // index into projects
 	top      int    // first visible row (scrolling viewport)
+	helping  bool   // command overlay open (toggled with ?)
 	loading  bool
 	err      error
 
@@ -83,9 +84,21 @@ func (m PickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 
 	case tea.KeyMsg:
+		if m.helping {
+			// overlay eats everything except close/quit
+			switch msg.String() {
+			case "ctrl+c":
+				return m, tea.Quit
+			case "esc", "?":
+				m.helping = false
+			}
+			return m, nil
+		}
 		switch msg.String() {
 		case "ctrl+c", "q", "esc":
 			return m, tea.Quit
+		case "?":
+			m.helping = true
 		case "up", "k":
 			if m.selected > 0 {
 				m.selected--
@@ -172,8 +185,18 @@ func (m PickerModel) View() string {
 	}
 
 	list := pickerListStyle.Width(m.innerWidth()).Height(inner).Render(content)
-	foot := pickerDimStyle.Render(" \u2191/\u2193 or j/k: move \u00b7 Enter: select \u00b7 q or Esc: quit")
-	return m.header() + "\n" + scroll + "\n" + list + "\n" + foot
+	foot := pickerDimStyle.Render(" ?: commands · q or Esc: quit")
+	view := m.header() + "\n" + scroll + "\n" + list + "\n" + foot
+	if m.helping {
+		return overlayCenter(view, helpBox([][2]string{
+			{"↑/↓ or j/k", "move selection"},
+			{"g / G", "first / last project"},
+			{"Enter", "open project board"},
+			{"Esc", "close help"},
+			{"q", "quit"},
+		}))
+	}
+	return view
 }
 
 // renderRow draws one project row, padded to the full pane width,
