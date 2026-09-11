@@ -1045,17 +1045,22 @@ func (m BoardModel) renderBoard() string {
 // renderHelp overlays the centered command list on top of the board view.
 func (m BoardModel) renderHelp(bg string) string {
 	rows := [][2]string{
-		{"h/l or ←/→", "switch column"},
-		{"j/k or ↑/↓", "move in column"},
-		{"g / G", "first / last card"},
-		{"H / L", "move card left / right"},
-		{"+", "add item"},
-		{"-", "delete item (asks to confirm)"},
+		{"h / ←", "previous column"},
+		{"l / →", "next column"},
+		{"j / ↓", "next item"},
+		{"k / ↑", "previous item"},
+		{"g", "first item"},
+		{"G", "last item"},
+		{},
 		{"Enter", "open item detail"},
-		{"e", "edit title (in detail view)"},
+		{},
+		{"+", "add item to the selected column"},
+		{"-", "delete the selected item"},
+		{},
+		{"H", "move item to previous column"},
+		{"L", "move item to next column"},
+		{},
 		{"r", "refresh board"},
-		{"Esc", "back / close help"},
-		{"q", "quit"},
 	}
 	return overlayCenter(bg, helpBox(rows), m.width)
 }

@@ -189,11 +189,12 @@ func (m PickerModel) View() string {
 	view := m.header() + "\n" + scroll + "\n" + list + "\n" + foot
 	if m.helping {
 		return overlayCenter(view, helpBox([][2]string{
-			{"↑/↓ or j/k", "move selection"},
-			{"g / G", "first / last project"},
+			{"k / ↑", "previous project"},
+			{"j / ↓", "next project"},
+			{"g", "first project"},
+			{"G", "last project"},
+			{},
 			{"Enter", "open project board"},
-			{"Esc", "close help"},
-			{"q", "quit"},
 		}), m.width)
 	}
 	return view

@@ -72,7 +72,11 @@ func helpBox(rows [][2]string) string {
 	var lines []string
 	lines = append(lines, themeTitle.Render("Commands"), "")
 	for _, r := range rows {
-		lines = append(lines, fmt.Sprintf("%-14s%s", r[0], r[1]))
+		if r[0] == "" && r[1] == "" {
+			lines = append(lines, "") // group separator
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("%-16s%s", r[0], r[1]))
 	}
 	lines = append(lines, "", modalFoot("? or Esc: close"))
 	w := 0

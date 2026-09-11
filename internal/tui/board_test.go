@@ -560,7 +560,7 @@ func TestHelpOverlay(t *testing.T) {
 		t.Fatalf("? should not return a cmd")
 	}
 	v := m.View()
-	if !strings.Contains(v, "Commands") || !strings.Contains(v, "move in column") {
+	if !strings.Contains(v, "Commands") || !strings.Contains(v, "next item") {
 		t.Errorf("help overlay not shown:\n%s", v)
 	}
 	// overlay eats navigation keys
