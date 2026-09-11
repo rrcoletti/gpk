@@ -17,6 +17,7 @@ func FromGhItems(items []gh.Item) []Item {
 			Body:      it.Body,
 			Repo:      it.Repo,
 			ContentID: it.ContentID,
+			Fields:    it.Fields,
 		}
 	}
 	return out

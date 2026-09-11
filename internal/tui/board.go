@@ -154,33 +154,11 @@ func (m BoardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		if m.detail {
-			switch msg.String() {
-			case "ctrl+c":
-				return m, tea.Quit
-			case "esc", "enter", "q":
-				m.detail = false
-				m.detailScroll = 0
-			case "up", "k":
-				if m.detailScroll > 0 {
-					m.detailScroll--
-				}
-			case "down", "j":
-				if m.detailScroll < m.detailMaxScroll() {
-					m.detailScroll++
-				}
-			case "e":
-				if !m.editing {
-					if card, ok := m.selectedCard(); ok {
-						m.input.SetValue(card.Title) // raw title only, no "#number"
-						m.input.CursorEnd()
-						m.input.Focus()
-						m.editing = true
-						return m, nil // don't feed the opening keypress to the input
-					}
-				}
-			}
 			if m.editing {
+				// the editor owns the keyboard; esc cancels back to detail
 				switch msg.String() {
+				case "ctrl+c":
+					return m, tea.Quit
 				case "esc":
 					m.editing = false
 					m.input.Blur()
@@ -196,6 +174,30 @@ func (m BoardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					var cmd tea.Cmd
 					m.input, cmd = m.input.Update(msg)
 					return m, cmd
+				}
+				return m, nil
+			}
+			switch msg.String() {
+			case "ctrl+c":
+				return m, tea.Quit
+			case "esc", "enter", "q":
+				m.detail = false
+				m.detailScroll = 0
+			case "up", "k":
+				if m.detailScroll > 0 {
+					m.detailScroll--
+				}
+			case "down", "j":
+				if m.detailScroll < m.detailMaxScroll() {
+					m.detailScroll++
+				}
+			case "e":
+				if card, ok := m.selectedCard(); ok {
+					m.input.SetValue(card.Title) // raw title only, no "#number"
+					m.input.CursorEnd()
+					m.input.Focus()
+					m.editing = true
+					return m, nil // don't feed the opening keypress to the input
 				}
 			}
 			return m, nil
@@ -479,7 +481,7 @@ func (m BoardModel) header() string {
 	for _, c := range m.columns {
 		n += len(c.Cards)
 	}
-	return fmt.Sprintf("gpk %s · Project %s · %d item(s)", Version, m.titleBase, n)
+	return fmt.Sprintf("Project %s · %d item(s)", m.titleBase, n)
 }
 
 // itemMovedMsg is sent after a successful (or mock) card move.
@@ -705,36 +707,37 @@ func (m BoardModel) selectedCard() (board.Card, bool) {
 // consistent.
 func (m BoardModel) detailLayout() (head, body []string) {
 	card, _ := m.selectedCard()
-	inner := m.width - 6
-	if inner < 20 {
-		inner = 20
-	}
+	inner := m.modalInnerWidth()
 
 	meta := card.Type
 	if meta == "" {
 		meta = "Item"
 	}
 	if m.colSelected >= 0 && m.colSelected < len(m.columns) {
-		meta += " · " + m.columns[m.colSelected].Option.Name
+		meta += ": " + m.columns[m.colSelected].Option.Name
 	}
-	head = []string{bTitleStyle.Render(cardTitle(card)), "", bDimStyle.Render(meta)}
+	head = []string{bTitleStyle.Render(cardTitle(card)), "", themeCard.Render(meta)}
 	if card.Assignee != "" {
-		head = append(head, bDimStyle.Render("Assignee: @"+card.Assignee))
+		head = append(head, themeCard.Render("Assignee: @"+card.Assignee))
 	}
 	if card.Repo != "" {
-		head = append(head, bDimStyle.Render("Repository: "+card.Repo))
+		head = append(head, themeCard.Render("Repository: "+card.Repo))
+	}
+	for _, f := range card.Fields {
+		head = append(head, themeCard.Render(f.Field+": "+f.Value))
 	}
 	if card.URL != "" {
 		// OSC 8 makes the URL clickable in terminals that support it
 		// (ghostty does); elsewhere the plain URL text remains for
 		// copy/paste and terminal URL detection.
-		head = append(head, bDimStyle.Render(auth.Hyperlink(card.URL, card.URL, "", false)))
+		head = append(head, themeCard.Render(auth.Hyperlink(card.URL, card.URL, "", false)))
 	}
 	head = append(head, "")
 
-	body = wrap(strings.TrimSpace(card.Body), inner)
-	if len(body) == 0 {
-		body = []string{bDimStyle.Render("(no description)")}
+	if strings.TrimSpace(card.Body) == "" {
+		body = []string{themeCard.Render("(no description)")}
+	} else {
+		body = wrap(strings.TrimSpace(card.Body), inner)
 	}
 	return head, body
 }
@@ -749,41 +752,29 @@ func cardTitle(c board.Card) string {
 
 // detailMaxScroll is the largest detailScroll that still shows content.
 func (m BoardModel) detailMaxScroll() int {
-	head, body := m.detailLayout()
-	vis := m.height - len(head) - 2 // header block + blank + footer
-	if m.height == 0 {
-		vis = 12
-	}
-	if vis < 3 {
-		vis = 3
-	}
-	max := len(body) - vis
+	_, body := m.detailLayout()
+	max := len(body) - m.detailVis()
 	if max < 0 {
 		max = 0
 	}
 	return max
 }
 
-// renderDetail shows one card: title, metadata, and its body, scrollable.
-func (m BoardModel) renderDetail() string {
+// renderDetail shows one card: title, metadata, and its body, scrollable,
+// as a box overlaid on the board.
+func (m BoardModel) renderDetail(bg string) string {
 	if _, ok := m.selectedCard(); !ok {
-		return "\nNo card selected.\n"
+		return bg
 	}
 	head, body := m.detailLayout()
 
-	pane := strings.Join(head, "\n") + "\n" + strings.Join(body, "\n")
 	if m.editing {
-		pane = m.input.View() + "\n\n" + strings.Join(head[1:], "\n")
-		foot := pickerErrStyle.Render("enter save") + modalFoot(" · esc cancel")
-		return frame(m.width, m.height, head[0], pane, foot)
+		body := m.input.View() + "\n\n" + strings.Join(head[2:], "\n")
+		foot := pickerErrStyle.Render("Enter: save") + modalFoot(" · Esc: cancel")
+		return overlayCenter(bg, modalBox(head[0], body, foot, 0), m.width)
 	}
-	vis := m.height - len(head) - 6
-	if m.height == 0 {
-		vis = 12
-	}
-	if vis < 3 {
-		vis = 3
-	}
+
+	vis := m.detailVis()
 	scroll := m.detailScroll
 	if max := len(body) - vis; scroll > max {
 		scroll = max
@@ -796,11 +787,9 @@ func (m BoardModel) renderDetail() string {
 		end = len(body)
 	}
 	shown := body[scroll:end]
-	if pad := vis - (end - scroll); pad > 0 {
-		shown = append(shown, strings.Repeat("\n", pad))
-	}
-	foot := modalFoot("j/k scroll · e edit title · esc back")
-	return frame(m.width, m.height, head[0], pane+strings.Join(shown, "\n"), foot)
+	foot := modalFoot("↑/↓ or j/k: scroll · e: edit title · Esc: back")
+	content := strings.Join(head[2:], "\n") + "\n" + strings.Join(shown, "\n")
+	return overlayCenter(bg, modalBox(head[0], content, foot, m.modalInnerWidth()), m.width)
 }
 
 // clampRepoView keeps the selected repo row visible.
@@ -825,33 +814,32 @@ func (m *BoardModel) clampRepoView() {
 
 // renderAdd is the add screen: same full-screen treatment as title editing.
 // Shows where the item will be created (default repo or draft).
-func (m BoardModel) renderAdd() string {
+func (m BoardModel) renderAdd(bg string) string {
 	colName := "No Status"
 	if m.colSelected >= 0 && m.colSelected < len(m.columns) {
 		colName = m.columns[m.colSelected].Option.Name
 	}
+	title := modalTitle("New item — " + colName)
 
 	if m.choosingRepo {
 		// repo menu: the board's items come from several repositories
-		inner := m.height - 8
+		inner := m.height - 12
 		if m.height == 0 {
-			inner = 10
+			inner = 8
 		}
 		if inner < 1 {
 			inner = 1
 		}
+		var lines []string
+		for _, l := range wrap("The items on this board come from several repositories. Pick one:", m.modalInnerWidth()) {
+			lines = append(lines, themeCard.Render(l))
+		}
+		lines = append(lines, "")
 		var rows []string
 		for i, r := range m.repoCandidates {
 			line := "  " + r
 			if i == m.repoSel {
 				line = "> " + r
-			}
-			w := m.width - 6
-			if m.width == 0 {
-				w = 70
-			}
-			for lipgloss.Width(line) < w {
-				line += " "
 			}
 			if i == m.repoSel {
 				rows = append(rows, themeSelRow.Render(line))
@@ -859,39 +847,39 @@ func (m BoardModel) renderAdd() string {
 				rows = append(rows, line)
 			}
 		}
-		content := strings.Join(rows, "\n")
+		content := strings.Join(rows[m.repoTop:min(m.repoTop+inner, len(rows))], "\n")
 		if m.repoTop > 0 || m.repoTop+inner < len(m.repoCandidates) {
 			content += "\n" + themeDim.Render(fmt.Sprintf("  ↑ %d-%d of %d ↓",
 				m.repoTop+1, min(m.repoTop+inner, len(m.repoCandidates)), len(m.repoCandidates)))
 		}
-		pane := themeDim.Render("The items on this board come from several repositories. Pick one:") +
-			"\n\n" + content
-		foot := modalFoot("j/k move · enter select · esc cancel")
-		return frame(m.width, m.height, modalTitle("New item — "+colName), pane, foot)
+		foot := modalFoot("↑/↓ or j/k: move · Enter: select · Esc: cancel")
+		return overlayCenter(bg, modalBox(title, strings.Join(lines, "\n")+"\n"+content, foot, 0), m.width)
 	}
 
-	pane := m.input.View() + "\n\n"
+	body := m.input.View() + "\n\n"
 	if m.addRepo != "" {
-		pane += themeDim.Render("Will be created as an issue in " + m.addRepo + ".")
+		body += themeCard.Render("Note: item will be created as an issue in " + m.addRepo + ".")
 	} else {
-		pane += themeDim.Render("Will be created as a draft item (no repositories to create an issue in).")
+		body += themeCard.Render("Note: item will be created as a draft (no repositories to create an issue in).")
 	}
-	foot := modalFoot("enter create · esc cancel")
-	return frame(m.width, m.height, modalTitle("New item — "+colName), pane, foot)
+	foot := modalFoot("Enter: create · Esc: cancel")
+	return overlayCenter(bg, modalBox(title, body, foot, 0), m.width)
 }
 
-// renderConfirm is the delete confirmation screen: same full-screen
-// treatment as add and title editing.
-func (m BoardModel) renderConfirm() string {
+// renderConfirm is the delete confirmation overlay.
+func (m BoardModel) renderConfirm(bg string) string {
 	card, ok := m.selectedCard()
 	if !ok {
-		return "\nNo card selected.\n"
+		return bg
 	}
-	pane := themeCard.Render(cardTitle(card)) + "\n\n" +
-		themeErr.Render("This removes the item from the board.")
-	pane += "\n" + themeDim.Render("Drafts are deleted; linked issues and pull requests stay in their repository.")
-	foot := pickerErrStyle.Render("enter confirm delete") + modalFoot(" · esc cancel")
-	return frame(m.width, m.height, modalTitle("Delete item"), pane, foot)
+	var note []string
+	for _, l := range wrap("Note: drafts are deleted; linked issues and pull requests stay in their repository.", m.modalInnerWidth()) {
+		note = append(note, themeCard.Render(l))
+	}
+	body := themeCard.Render(cardTitle(card)) + "\n\n" +
+		themeErr.Render("This removes the item from the board.") + "\n\n" + strings.Join(note, "\n")
+	foot := pickerErrStyle.Render("Enter: confirm delete") + modalFoot(" · Esc: cancel")
+	return overlayCenter(bg, modalBox(modalTitle("Delete item"), body, foot, 0), m.width)
 }
 
 // layout computes how many columns are visible and their equal width.
@@ -952,19 +940,54 @@ func (m BoardModel) View() string {
 	if m.loading {
 		return "\n" + m.spinner.View() + " loading board...\n"
 	}
-	if m.adding {
-		return m.renderAdd()
-	}
-	if m.confirming {
-		return m.renderConfirm()
-	}
-	if m.detail {
-		return m.renderDetail()
-	}
 	if len(m.columns) == 0 {
 		return "\nNo columns found for this project.\n"
 	}
+	base := m.renderBoard()
+	if m.adding {
+		return m.renderAdd(base)
+	}
+	if m.confirming {
+		return m.renderConfirm(base)
+	}
+	if m.detail {
+		return m.renderDetail(base)
+	}
+	if m.helping {
+		return m.renderHelp(base)
+	}
+	return base
+}
 
+// modalInnerWidth is the content width of the modal overlay boxes.
+func (m BoardModel) modalInnerWidth() int {
+	w := m.width - 8
+	if w > 70 {
+		w = 70
+	}
+	if w < 20 {
+		w = 20
+	}
+	return w
+}
+
+// detailVis is the number of scrollable description rows that fit in the
+// detail box: terminal height minus the box overhead (title, blank, header
+// lines, footer, border).
+func (m BoardModel) detailVis() int {
+	head, _ := m.detailLayout()
+	vis := m.height - len(head) - 8 // never approach the terminal height
+	if vis > 12 {
+		vis = 12
+	}
+	if vis < 3 {
+		vis = 3
+	}
+	return vis
+}
+
+// renderBoard draws the plain board: header, columns, footer, toast.
+func (m BoardModel) renderBoard() string {
 	colW := m.columnWidth()
 	n := m.visibleColumnCount()
 	end := m.colOffset + n
@@ -990,7 +1013,8 @@ func (m BoardModel) View() string {
 		row = lipgloss.JoinHorizontal(lipgloss.Top, row, sliver)
 	}
 
-	head := bTitleStyle.Render(" "+m.header()) +
+	head := themeWhite.Render(" gpk "+Version) +
+		bTitleStyle.Render(" · "+m.header()) +
 		bDimStyle.Render(fmt.Sprintf(" [← %d/%d →]", m.colSelected+1, len(m.columns)))
 
 	toast := ""
@@ -1001,11 +1025,7 @@ func (m BoardModel) View() string {
 	}
 
 	foot := bDimStyle.Render(" ?: commands · Esc: back · q: quit")
-	view := head + "\n\n" + row + "\n" + foot + toast
-	if m.helping {
-		return m.renderHelp(view)
-	}
-	return view
+	return head + "\n\n" + row + "\n" + foot + toast
 }
 
 // renderHelp overlays the centered command list on top of the board view.
@@ -1023,7 +1043,7 @@ func (m BoardModel) renderHelp(bg string) string {
 		{"Esc", "back / close help"},
 		{"q", "quit"},
 	}
-	return overlayCenter(bg, helpBox(rows))
+	return overlayCenter(bg, helpBox(rows), m.width)
 }
 
 // renderColumn draws one column with header (colored, with count) and cards.
@@ -1074,20 +1094,12 @@ func (m BoardModel) renderColumn(i, colW int) string {
 
 // cardLines wraps a card into at most cardMaxLines view lines.
 func cardLines(c board.Card, width int) []string {
-	first := c.Title
-	if c.Number > 0 {
-		first = fmt.Sprintf("%s #%d", c.Title, c.Number)
-	}
-	wrapped := wrap(first, width)
+	wrapped := wrap(c.Title, width)
 	if len(wrapped) > cardMaxLines {
 		wrapped = wrapped[:cardMaxLines]
 		wrapped[len(wrapped)-1] = truncate(wrapped[len(wrapped)-1], width-1) + "…"
 	}
-	lines := wrapped
-	if c.Assignee != "" && len(lines) < cardMaxLines {
-		lines = append(lines, bDimStyle.Render("@"+c.Assignee))
-	}
-	return lines
+	return wrapped
 }
 
 func (m BoardModel) bodyHeight() int {

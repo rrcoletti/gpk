@@ -41,7 +41,7 @@ func TestAppBoardBackToPickerAndCachedReEntry(t *testing.T) {
 	if am.board.loading {
 		t.Fatal("boardDataMsg should end loading")
 	}
-	if got := am.board.header(); got != "gpk dev · Project proj · 1 item(s)" { // project title only, no number
+	if got := am.board.header(); got != "Project proj · 1 item(s)" { // project title only, no number
 		t.Fatalf("header = %q", got)
 	}
 

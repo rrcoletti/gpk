@@ -36,6 +36,9 @@ var (
 	// themeDim is secondary info: footers, counts, hints.
 	themeDim = lipgloss.NewStyle().Foreground(lipgloss.Color(colorDim))
 
+	// themeWhite is bold white: the "gpk <version>" prefix in headers.
+	themeWhite = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorRow))
+
 	// themeErr is error toasts/messages.
 	themeErr = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorError))
 
@@ -71,7 +74,7 @@ func helpBox(rows [][2]string) string {
 	for _, r := range rows {
 		lines = append(lines, fmt.Sprintf("%-14s%s", r[0], r[1]))
 	}
-	lines = append(lines, "", modalFoot("? or Esc close"))
+	lines = append(lines, "", modalFoot("? or Esc: close"))
 	w := 0
 	for _, l := range lines {
 		if lw := lipgloss.Width(l); lw > w {
@@ -83,9 +86,14 @@ func helpBox(rows [][2]string) string {
 
 // overlayCenter stamps box centered over bg. Stamping is ANSI-aware:
 // styled bg lines are cut with x/ansi so escape sequences survive (the
-// peek sliver needed the same treatment).
-func overlayCenter(bg, box string) string {
-	x := (lipgloss.Width(bg) - lipgloss.Width(box)) / 2
+// peek sliver needed the same treatment). termW is the real terminal
+// width; bg lines can exceed it (long headers), and centering must not.
+func overlayCenter(bg, box string, termW int) string {
+	bgW := lipgloss.Width(bg)
+	if termW > 0 && termW < bgW {
+		bgW = termW
+	}
+	x := (bgW - lipgloss.Width(box)) / 2
 	y := (lipgloss.Height(bg) - lipgloss.Height(box)) / 2
 	if x < 0 {
 		x = 0
@@ -105,6 +113,29 @@ func overlayCenter(bg, box string) string {
 		bgLines[by] = left + b + ansi.TruncateLeft(bgLines[by], x+lipgloss.Width(b), "")
 	}
 	return strings.Join(bgLines, "\n")
+}
+
+// modalBox renders a modal dialog: bold title, body, footer, wrapped in the
+// focused pane's blue border. Body/footer may contain styled lines; the box
+// width adapts to the widest line unless width > 0 is given.
+func modalBox(title, body, foot string, width int) string {
+	w := width
+	if w <= 0 {
+		w = lipgloss.Width(title)
+		for _, l := range strings.Split(body, "\n") {
+			if lw := lipgloss.Width(l); lw > w {
+				w = lw
+			}
+		}
+		if lw := lipgloss.Width(foot); lw > w {
+			w = lw
+		}
+	}
+	// Padding(0,1) insets content by one cell on each side and eats into
+	// the declared width, so reserve two cells for it.
+	w += 2
+	lines := title + "\n\n" + body + "\n\n" + foot
+	return themeSelList.Padding(0, 1).Width(w).Render(lines)
 }
 
 // frame renders a full-window screen: header line, a bordered pane filling

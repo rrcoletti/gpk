@@ -17,6 +17,15 @@ type Item struct {
 	Body      string // markdown body, may be empty
 	Repo      string // "owner/name", empty for drafts
 	ContentID string // node id of the Issue/PullRequest, "" for drafts
+	// Fields holds the item's other single-select field values (Priority,
+	// Size, ...) in field order, status excluded.
+	Fields []ItemField
+}
+
+// ItemField is one non-status single-select field value.
+type ItemField struct {
+	Field string
+	Value string
 }
 
 // GetProjectItems fetches one page of a project's items, resolving each
@@ -40,8 +49,9 @@ func (c *Client) GetProjectItems(ctx context.Context, projectID, statusFieldID s
 									__typename
 									... on ProjectV2ItemFieldSingleSelectValue {
 										optionId
+										name
 										field {
-											... on ProjectV2SingleSelectField { id }
+											... on ProjectV2SingleSelectField { id name }
 										}
 									}
 								}
@@ -92,8 +102,10 @@ func (c *Client) GetProjectItems(ctx context.Context, projectID, statusFieldID s
 						Nodes []struct {
 							Typename string `json:"__typename"`
 							OptionID string `json:"optionId"`
+							Name     string `json:"name"`
 							Field    struct {
-								ID string `json:"id"`
+								ID   string `json:"id"`
+								Name string `json:"name"`
 							} `json:"field"`
 						} `json:"nodes"`
 					} `json:"fieldValues"`
@@ -139,9 +151,15 @@ func (c *Client) GetProjectItems(ctx context.Context, projectID, statusFieldID s
 			it.Assignee = n.Content.Assignees.Nodes[0].Login
 		}
 		for _, fv := range n.FieldValues.Nodes {
-			if fv.Typename == "ProjectV2ItemFieldSingleSelectValue" && fv.Field.ID == statusFieldID {
+			if fv.Typename != "ProjectV2ItemFieldSingleSelectValue" {
+				continue
+			}
+			if fv.Field.ID == statusFieldID {
 				it.OptionID = fv.OptionID
-				break
+				continue
+			}
+			if fv.Field.Name != "" && fv.Name != "" {
+				it.Fields = append(it.Fields, ItemField{Field: fv.Field.Name, Value: fv.Name})
 			}
 		}
 		items = append(items, it)

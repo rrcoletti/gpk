@@ -1,5 +1,7 @@
 package board
 
+import "gpk/internal/gh"
+
 // Item is the raw per-item data the board needs, decoupled from GraphQL.
 type Item struct {
 	ID        string
@@ -12,4 +14,5 @@ type Item struct {
 	Body      string
 	Repo      string
 	ContentID string
+	Fields    []gh.ItemField // other single-select values (Priority, Size, ...)
 }

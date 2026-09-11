@@ -194,7 +194,7 @@ func (m PickerModel) View() string {
 			{"Enter", "open project board"},
 			{"Esc", "close help"},
 			{"q", "quit"},
-		}))
+		}), m.width)
 	}
 	return view
 }
@@ -246,11 +246,11 @@ func (m *PickerModel) clamp() {
 
 // header is the top bar: app name, project count, pagination hint.
 func (m PickerModel) header() string {
-	t := fmt.Sprintf(" gpk %s \u00b7 %s's GitHub \u00b7 %d project(s)", Version, User, len(m.projects))
+	t := fmt.Sprintf("%s's GitHub · %d project(s)", User, len(m.projects))
 	if m.cursor != "" {
-		t += " \u00b7 more available"
+		t += " · more available"
 	}
-	return pickerTitleStyle.Render(t)
+	return themeWhite.Render(fmt.Sprintf(" gpk %s", Version)) + pickerTitleStyle.Render(" · "+t)
 }
 
 // listHeight is the number of visible rows for the current terminal size.

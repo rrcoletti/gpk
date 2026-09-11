@@ -19,6 +19,7 @@ type Card struct {
 	Body      string
 	Repo      string
 	ContentID string
+	Fields    []gh.ItemField // other single-select values, for the detail view
 }
 
 // Column is one kanban column: a status option plus its cards.
@@ -56,6 +57,7 @@ func Build(status gh.FieldDef, items []Item) []Column {
 			Body:      it.Body,
 			Repo:      it.Repo,
 			ContentID: it.ContentID,
+			Fields:    it.Fields,
 		}
 		i, ok := index[it.OptionID]
 		if !ok {

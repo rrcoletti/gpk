@@ -427,7 +427,7 @@ func TestAddScreenDraftVsRepo(t *testing.T) {
 		t.Fatalf("no repos on board: addRepo=%q adding=%v", m.addRepo, m.adding)
 	}
 	v := m.View()
-	if !strings.Contains(v, "draft item") {
+	if !strings.Contains(v, "as a draft") {
 		t.Errorf("add screen should announce a draft:\n%s", v)
 	}
 
@@ -578,5 +578,28 @@ func TestHelpOverlay(t *testing.T) {
 	}
 	if strings.Contains(m.View(), "Commands") {
 		t.Error("overlay should be closed after esc")
+	}
+}
+
+func TestEditEscStaysInDetail(t *testing.T) {
+	m := mockBoard(t)
+	up, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 25})
+	m = up.(BoardModel)
+	up, _ = m.Update(key("enter")) // detail
+	m = up.(BoardModel)
+	up, _ = m.Update(key("e")) // editing
+	m = up.(BoardModel)
+	if !m.editing {
+		t.Fatal("editing not open")
+	}
+	up, _ = m.Update(key("esc"))
+	m = up.(BoardModel)
+	if m.editing || !m.detail {
+		t.Fatalf("esc from editor should stay in detail: editing=%v detail=%v", m.editing, m.detail)
+	}
+	up, _ = m.Update(key("esc"))
+	m = up.(BoardModel)
+	if m.detail {
+		t.Fatal("esc from detail should close it")
 	}
 }

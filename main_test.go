@@ -48,7 +48,11 @@ func TestToBoardItemsCopiesEveryField(t *testing.T) {
 		URL: "https://github.com/o/r/issues/42", Assignee: "someone",
 		OptionID: "opt-status", Body: "the body", Repo: "o/r", ContentID: "I_issue1",
 	}
-	if got != want {
+	if got.ID != want.ID || got.Title != want.Title || got.Type != want.Type ||
+		got.Number != want.Number || got.URL != want.URL ||
+		got.Assignee != want.Assignee || got.OptionID != want.OptionID ||
+		got.Body != want.Body || got.Repo != want.Repo ||
+		got.ContentID != want.ContentID || len(got.Fields) != 0 {
 		t.Errorf("field dropped or changed:\n got %+v\nwant %+v", got, want)
 	}
 	d := out[1]
