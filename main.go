@@ -33,7 +33,7 @@ import (
 	"gpk/internal/tui"
 )
 
-var version = "1.0.0"
+var version = "1.0.1"
 
 func main() {
 	whoami := flag.Bool("whoami", false, "verify auth: print the GitHub login the stored token resolves to")
